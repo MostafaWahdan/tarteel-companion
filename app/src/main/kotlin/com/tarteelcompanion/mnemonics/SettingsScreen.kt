@@ -42,10 +42,13 @@ fun SettingsScreen() {
     val scope = rememberCoroutineScope()
 
     var keyInput by remember { mutableStateOf("") }
-    var hasStoredKey by remember { mutableStateOf(false) }
+    var storedKeyHint by remember { mutableStateOf<String?>(null) }
     var status by remember { mutableStateOf<String?>(null) }
+    val hasStoredKey = storedKeyHint != null
 
-    LaunchedEffect(Unit) { hasStoredKey = app.apiKeyStore.load() != null }
+    fun hintOf(key: String) = "…${key.takeLast(4)}"
+
+    LaunchedEffect(Unit) { storedKeyHint = app.apiKeyStore.load()?.let(::hintOf) }
 
     Column(
         Modifier
@@ -64,7 +67,7 @@ fun SettingsScreen() {
         )
         Spacer(Modifier.height(16.dp))
         Text(
-            if (hasStoredKey) "A key is saved on this device (encrypted)." else "No key saved.",
+            storedKeyHint?.let { "Key $it is saved on this device (encrypted)." } ?: "No key saved.",
             style = MaterialTheme.typography.labelLarge,
         )
         Spacer(Modifier.height(8.dp))
@@ -83,28 +86,39 @@ fun SettingsScreen() {
                 enabled = keyInput.isNotBlank(),
                 onClick = {
                     scope.launch {
-                        app.apiKeyStore.save(keyInput.trim())
+                        val key = keyInput.trim()
+                        app.apiKeyStore.save(key)
                         keyInput = ""
-                        hasStoredKey = true
-                        status = "Key saved."
+                        storedKeyHint = hintOf(key)
+                        status = "Key ${hintOf(key)} saved."
                         GenerationWorker.enqueue(context) // pick up any waiting mnemonics
                     }
                 },
             ) { Text("Save key") }
             Spacer(Modifier.width(8.dp))
             OutlinedButton(
-                enabled = hasStoredKey,
+                enabled = hasStoredKey || keyInput.isNotBlank(),
                 onClick = {
                     scope.launch {
-                        status = "Testing…"
+                        // A typed key is saved first, then tested — testing the stored
+                        // key while a fresh one sits unsaved in the field silently
+                        // tested the OLD key (rotation confusion, user-reported).
+                        if (keyInput.isNotBlank()) {
+                            val key = keyInput.trim()
+                            app.apiKeyStore.save(key)
+                            keyInput = ""
+                            storedKeyHint = hintOf(key)
+                            GenerationWorker.enqueue(context)
+                        }
                         val key = app.apiKeyStore.load()
                         status = if (key == null) {
                             "No key saved."
                         } else {
+                            status = "Testing key ${hintOf(key)}…"
                             when (val r = withContext(Dispatchers.IO) { GeminiClient().generate(key, "قل: نعم") }) {
-                                is LlmResult.Success -> "Connection OK."
-                                is LlmResult.Retryable -> "Temporarily unavailable: ${r.reason}"
-                                is LlmResult.Failed -> "Failed: ${r.reason}"
+                                is LlmResult.Success -> "Key ${hintOf(key)}: connection OK."
+                                is LlmResult.Retryable -> "Key ${hintOf(key)} temporarily unavailable: ${r.reason}"
+                                is LlmResult.Failed -> "Key ${hintOf(key)} failed: ${r.reason}"
                             }
                         }
                     }
@@ -116,7 +130,7 @@ fun SettingsScreen() {
                 onClick = {
                     scope.launch {
                         app.apiKeyStore.clear()
-                        hasStoredKey = false
+                        storedKeyHint = null
                         status = "Key removed."
                     }
                 },
