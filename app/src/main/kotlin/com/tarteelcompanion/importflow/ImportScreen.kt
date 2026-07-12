@@ -24,8 +24,8 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.tarteelcompanion.TarteelApp
+import com.tarteelcompanion.extraction.AnchoringPipeline
 import com.tarteelcompanion.extraction.ExtractionResult
-import com.tarteelcompanion.extraction.ManualOnlyPipeline
 import com.tarteelcompanion.quran.QuranRepository
 
 /** F1 entry: multi-select picker (share-sheet intents land here too via TarteelApp). */
@@ -33,10 +33,10 @@ import com.tarteelcompanion.quran.QuranRepository
 fun ImportScreen(
     quran: QuranRepository?,
     viewModel: ImportViewModel = viewModel(
-        factory = ImportViewModel.factory(
-            LocalContext.current.applicationContext as TarteelApp,
-            ManualOnlyPipeline(), // U4 swaps in the calibrated pipeline after the spike
-        ),
+        factory = run {
+            val app = LocalContext.current.applicationContext as TarteelApp
+            ImportViewModel.factory(app) { AnchoringPipeline(app.quran.await()) }
+        },
     ),
 ) {
     val app = LocalContext.current.applicationContext as TarteelApp
@@ -97,6 +97,7 @@ fun ImportScreen(
                     total = s.total,
                     onSave = { p, d -> viewModel.save(s.item, p, d) },
                     onDiscard = viewModel::discard,
+                    onAutoDetect = viewModel::autoDetect,
                 )
             }
         }

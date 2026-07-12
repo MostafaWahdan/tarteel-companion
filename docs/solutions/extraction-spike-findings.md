@@ -54,6 +54,32 @@ card-friendly (oversized >12-member groups are <5% — asserted in
 `QuranRepositoryTest`). Keying granularity matches U9's (group, target-ayah) design.
 No pivot needed.
 
+## U4 implementation findings (2026-07-12, post-build)
+
+Empirical conclusions from building the pipeline against the corpus:
+
+- **Blind page identification from geometry is NOT achievable.** A width model
+  (per-letter advance classes) aligned via DP fits wrong pages as well as the true
+  page — globally (best impostor 0.135 vs true 0.159), per-line (0.011 vs 0.033), and
+  even within a ±30-page window. Adjacent pages are also not separable (162 beat 163
+  once). Do not retry threshold tuning; the signal is fundamentally too weak.
+- **Known-page anchoring WORKS: 18/18 screenshots.** Given the page number, the
+  two-stage alignment (line-total DP partition, then within-line run DP with
+  proportional fallback) maps colored clusters to word positions with in-surah
+  accuracy across the corpus, including the ground-truth 3:79 pronunciation marks.
+- **Shipped v1 flow:** first screenshot of a batch → user types the page number
+  (visible in Tarteel's own header) → auto-detect pre-marks the mistakes; subsequent
+  screenshots anchor at the previous confirmed page automatically, and the confirm
+  screen remains the authority for page corrections (re-anchors on demand).
+- **Guards that matter:** px-per-unit must be a plausible fraction of line height
+  (0.08–0.8×) or short pages "fit" dense screenshots at absurd scales; smooth color
+  fills (history blobs, ayah-band overlays) must be excluded from ink via a local-
+  contrast gate or they weld whole lines into one run; a 3% horizontal inset removes
+  scrollbar artifacts.
+- **Future work if full automation is wanted:** read the header's Latin page digits
+  via self-calibrating templates (each manual page confirmation associates header
+  glyph crops with known digits; once 0–9 are covered, imports are fully automatic).
+
 ## Open items for U4 implementation
 
 - Header digit templates must be captured from the corpus (fixed UI font, Latin digits).

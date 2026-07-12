@@ -62,8 +62,11 @@ class ImportViewModel(
     private val quranDeferred: Deferred<QuranRepository>,
     private val mistakes: MistakeRepository,
     private val policy: SchedulingPolicy,
-    private val pipeline: ExtractionPipeline,
+    private val pipelineProvider: suspend () -> ExtractionPipeline,
 ) : ViewModel() {
+
+    /** Batch context: the last confirmed page seeds the next screenshot's hint. */
+    private var lastConfirmedPage: Int? = null
 
     private val _state = MutableStateFlow<ImportUiState>(ImportUiState.Idle)
     val state: StateFlow<ImportUiState> = _state
@@ -82,11 +85,12 @@ class ImportViewModel(
         /** Working size for extraction/display; screenshots are downsampled to fit. */
         const val TARGET_MAX_PX = 2_000
 
-        fun factory(app: TarteelApp, pipeline: ExtractionPipeline) = object : ViewModelProvider.Factory {
-            @Suppress("UNCHECKED_CAST")
-            override fun <T : ViewModel> create(modelClass: Class<T>): T =
-                ImportViewModel(app, app.quran, app.mistakes, app.policy, pipeline) as T
-        }
+        fun factory(app: TarteelApp, pipelineProvider: suspend () -> ExtractionPipeline) =
+            object : ViewModelProvider.Factory {
+                @Suppress("UNCHECKED_CAST")
+                override fun <T : ViewModel> create(modelClass: Class<T>): T =
+                    ImportViewModel(app, app.quran, app.mistakes, app.policy, pipelineProvider) as T
+            }
     }
 
     /** Entry from the picker or the share sheet; new share intents queue behind the batch (I4). */
@@ -111,13 +115,28 @@ class ImportViewModel(
         _state.value = ImportUiState.Processing(processedCount, batchTotal)
 
         viewModelScope.launch {
-            val item = withContext(Dispatchers.IO) { load(uri) }
+            val item = withContext(Dispatchers.IO) { load(uri, lastConfirmedPage) }
             if (item == null) {
                 discarded++
                 processNext()
             } else {
                 _state.value = ImportUiState.Confirming(item, processedCount, batchTotal)
             }
+        }
+    }
+
+    /** Re-anchors the current screenshot against a user-entered page number (U4 flow). */
+    fun autoDetect(page: Int) {
+        val current = _state.value as? ImportUiState.Confirming ?: return
+        viewModelScope.launch {
+            val pipeline = pipelineProvider()
+            val item = current.item
+            val result = withContext(Dispatchers.IO) {
+                val pixels = IntArray(item.bitmap.width * item.bitmap.height)
+                item.bitmap.getPixels(pixels, 0, item.bitmap.width, 0, 0, item.bitmap.width, item.bitmap.height)
+                pipeline.anchorAt(pixels, item.bitmap.width, item.bitmap.height, page)
+            }
+            _state.value = current.copy(item = item.copy(extraction = result))
         }
     }
 
@@ -133,6 +152,7 @@ class ImportViewModel(
                 nowEpochMillis = System.currentTimeMillis(),
                 thumbnailPath = withContext(Dispatchers.IO) { saveThumbnail(item) },
             )
+            if (pageNumber != null) lastConfirmedPage = pageNumber
             when (result) {
                 ImportResult.DuplicateImage -> duplicates++
                 is ImportResult.Saved -> {
@@ -153,15 +173,15 @@ class ImportViewModel(
         processNext()
     }
 
-    private fun load(uri: Uri): ImportItem? {
+    private suspend fun load(uri: Uri, pageHint: Int?): ImportItem? {
         return try {
-            loadUnsafe(uri)
+            loadUnsafe(uri, pageHint)
         } catch (_: Exception) {
             null
         }
     }
 
-    private fun loadUnsafe(uri: Uri): ImportItem? {
+    private suspend fun loadUnsafe(uri: Uri, pageHint: Int?): ImportItem? {
         val bytes = appContext.contentResolver.openInputStream(uri)?.use { it.readBytes() }
             ?: return null
 
@@ -183,7 +203,8 @@ class ImportViewModel(
         val pixels = IntArray(bitmap.width * bitmap.height)
         bitmap.getPixels(pixels, 0, bitmap.width, 0, 0, bitmap.width, bitmap.height)
 
-        return ImportItem(uri, hash, bitmap, pipeline.extract(pixels, bitmap.width, bitmap.height))
+        val extraction = pipelineProvider().extract(pixels, bitmap.width, bitmap.height, pageHint)
+        return ImportItem(uri, hash, bitmap, extraction)
     }
 
     /** Keep a small thumbnail for history; the full image is discarded after confirm (M3). */

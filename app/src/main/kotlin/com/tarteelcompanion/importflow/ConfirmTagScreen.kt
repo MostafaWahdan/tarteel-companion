@@ -62,10 +62,11 @@ fun ConfirmTagScreen(
     total: Int,
     onSave: (page: Int?, detections: List<Detection>) -> Unit,
     onDiscard: () -> Unit,
+    onAutoDetect: ((Int) -> Unit)? = null,
 ) {
-    var pageInput by remember { mutableStateOf((initialPage ?: 1).toString()) }
+    var pageInput by remember(initialPage) { mutableStateOf((initialPage ?: 1).toString()) }
     var showReference by remember { mutableStateOf(true) }
-    val marks = remember {
+    val marks = remember(initialDetections) {
         mutableStateMapOf<WordRef, MistakeType>().apply {
             initialDetections.forEach { put(it.ref, it.type) }
         }
@@ -92,6 +93,12 @@ fun ConfirmTagScreen(
                 modifier = Modifier.width(140.dp),
             )
             Spacer(Modifier.width(8.dp))
+            if (onAutoDetect != null) {
+                TextButton(
+                    enabled = pageNumber != null,
+                    onClick = { pageNumber?.let(onAutoDetect) },
+                ) { Text("Auto-detect") }
+            }
             TextButton(onClick = { showReference = !showReference }) {
                 Text(if (showReference) "Hide screenshot" else "Show screenshot")
             }
