@@ -30,6 +30,7 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import com.tarteelcompanion.TarteelApp
 import com.tarteelcompanion.quran.QuranRepository
+import com.tarteelcompanion.quiz.QuizScreen
 import com.tarteelcompanion.study.StudyScreen
 
 /**
@@ -88,7 +89,7 @@ fun TarteelCompanionApp() {
                 composable(Destination.Home.route) { PlaceholderScreen("Home") }
                 composable(Destination.Import.route) { PlaceholderScreen("Import") }
                 composable(Destination.Study.route) { StudyScreen(quran) }
-                composable(Destination.Quiz.route) { PlaceholderScreen("Quiz") }
+                composable(Destination.Quiz.route) { QuizScreen(quran) }
                 composable(Destination.Archive.route) { PlaceholderScreen("Archive") }
                 composable(SETTINGS_ROUTE) { PlaceholderScreen("Settings") }
             }
