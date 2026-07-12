@@ -79,6 +79,8 @@ class ImportViewModel(
     private var duplicates = 0
 
     companion object {
+        private const val TAG = "ImportViewModel"
+
         /** Decode-bounds cap: reject absurd inputs before full decode (security FYI). */
         const val MAX_DIMENSION_PX = 8_000
 
@@ -176,18 +178,23 @@ class ImportViewModel(
     private suspend fun load(uri: Uri, pageHint: Int?): ImportItem? {
         return try {
             loadUnsafe(uri, pageHint)
-        } catch (_: Exception) {
+        } catch (e: Exception) {
+            android.util.Log.w(TAG, "screenshot load failed for $uri", e)
             null
         }
     }
 
     private suspend fun loadUnsafe(uri: Uri, pageHint: Int?): ImportItem? {
         val bytes = appContext.contentResolver.openInputStream(uri)?.use { it.readBytes() }
-            ?: return null
+        if (bytes == null) {
+            android.util.Log.w(TAG, "no stream for $uri")
+            return null
+        }
 
         val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
         BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
         if (bounds.outWidth !in 1..MAX_DIMENSION_PX || bounds.outHeight !in 1..MAX_DIMENSION_PX) {
+            android.util.Log.w(TAG, "implausible dimensions ${bounds.outWidth}x${bounds.outHeight} for $uri")
             return null // not a plausible screenshot; reject before full decode
         }
 
@@ -195,7 +202,11 @@ class ImportViewModel(
         val bitmap = BitmapFactory.decodeByteArray(
             bytes, 0, bytes.size,
             BitmapFactory.Options().apply { inSampleSize = sample },
-        ) ?: return null
+        )
+        if (bitmap == null) {
+            android.util.Log.w(TAG, "bitmap decode failed for $uri")
+            return null
+        }
 
         val hash = MessageDigest.getInstance("SHA-256").digest(bytes)
             .joinToString("") { "%02x".format(it) }

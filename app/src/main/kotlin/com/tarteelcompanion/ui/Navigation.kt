@@ -22,6 +22,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.navigation.NavDestination.Companion.hierarchy
 import androidx.navigation.NavGraph.Companion.findStartDestination
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.produceState
 import androidx.compose.ui.platform.LocalContext
 import androidx.navigation.compose.NavHost
@@ -60,6 +62,18 @@ fun TarteelCompanionApp() {
         val app = LocalContext.current.applicationContext as TarteelApp
         val quran by produceState<QuranRepository?>(initialValue = null) {
             value = app.quran.await()
+        }
+        // Shared screenshots land on the Import tab immediately — consumption must not
+        // straddle a tab switch (the Import ViewModel dies with its back-stack entry).
+        val pendingShares by app.pendingShares.collectAsState()
+        LaunchedEffect(pendingShares) {
+            if (pendingShares.isNotEmpty()) {
+                navController.navigate(Destination.Import.route) {
+                    popUpTo(navController.graph.findStartDestination().id) { saveState = true }
+                    launchSingleTop = true
+                    restoreState = true
+                }
+            }
         }
 
         Scaffold(
