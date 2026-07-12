@@ -1,0 +1,131 @@
+{
+  "reviewer": "maintainability",
+  "run_id": "20260712-202520-a345f51d",
+  "scope": "Full greenfield diff (base 869818a) - 70 files, app/ + gradle",
+  "findings": [
+    {
+      "id": "MAINT-01",
+      "title": "Identical private Centered() helper duplicated in three screens",
+      "description": "The exact same 3-line composable private fun Centered(content) { Box(Modifier.fillMaxSize().padding(24.dp), contentAlignment = Alignment.Center) { content() } } is copy-pasted verbatim in StudyScreen.kt, QuizScreen.kt, and ImportScreen.kt (the review brief mentioned two; there are actually three). Any future change to the loading/empty-state layout has to be made in three places and will silently drift if one is missed.",
+      "locations": [
+        "app/src/main/kotlin/com/tarteelcompanion/study/StudyScreen.kt:212-214",
+        "app/src/main/kotlin/com/tarteelcompanion/quiz/QuizScreen.kt:148-150",
+        "app/src/main/kotlin/com/tarteelcompanion/importflow/ImportScreen.kt:128-130"
+      ],
+      "pre_existing": false,
+      "severity": "P2",
+      "confidence": 90,
+      "autofix_class": "safe_auto",
+      "owner": "review-fixer",
+      "recommendation": "Move Centered() into ui/ (e.g. alongside PassageText.kt or a small ui/Layout.kt) and have all three screens import the single definition."
+    },
+    {
+      "id": "MAINT-02",
+      "title": "Card header and revealed-passage rendering duplicated across Study and Quiz screens",
+      "description": "Beyond Centered(), StudyScreen.CardView and QuizScreen.Question both independently implement: (a) the RTL surah/ayah title plus optional lead-in block, and (b) the iterate-card.passage-render-PassageText-with-marks block, the latter appearing three times total (once in StudyScreen, twice in QuizScreen REVEALED/GRADED phases). The structure is copy-pasted with only the trailing GradeBar/mnemonic wiring differing. Judgment-level: the phase-driven differences in Quiz make full unification non-trivial, but this is duplicated domain-rendering logic that the task brief specifically flagged, not incidental similarity.",
+      "locations": [
+        "app/src/main/kotlin/com/tarteelcompanion/study/StudyScreen.kt:135-176",
+        "app/src/main/kotlin/com/tarteelcompanion/quiz/QuizScreen.kt:86-137"
+      ],
+      "pre_existing": false,
+      "severity": "P3",
+      "confidence": 50,
+      "autofix_class": "advisory",
+      "owner": "human",
+      "recommendation": "Consider extracting a shared CardHeader(card) composable and a shared MarkedPassage(card, marks) composable that both screens call, parameterizing only what legitimately differs (mnemonic/comparison visibility)."
+    },
+    {
+      "id": "MAINT-03",
+      "title": "SegmentationDiagnosticTest is a committed throwaway diagnostic with no assertions",
+      "description": "SegmentationDiagnosticTest.kt is explicitly labeled, in its own doc comment, as a throwaway diagnostic that dumps segmentation structure for one sample per page. Both test methods make zero assertions: they walk the filesystem for a personal, gitignored samples directory, run the pipeline, and write free-form text reports to app/build/*.txt. Because samples/ is usually absent, the tests are skipped via assumeTrue and never fail CI, but they also never verify anything - they are a manual side-effecting script wearing a JUnit @Test annotation. This is dead weight in the permanent test suite; the commit message describes it as the U3 spike harness, whose findings are already captured separately in docs/solutions/extraction-spike-findings.md.",
+      "locations": [
+        "app/src/test/kotlin/com/tarteelcompanion/extraction/SegmentationDiagnosticTest.kt:1-113"
+      ],
+      "pre_existing": false,
+      "severity": "P2",
+      "confidence": 90,
+      "autofix_class": "manual",
+      "owner": "human",
+      "recommendation": "Delete the file, or move it out of src/test into a standalone script/tool directory that is not compiled as part of the JUnit suite, now that the U3 spike is complete."
+    },
+    {
+      "id": "MAINT-04",
+      "title": "Debug-only methods shipped in production PageMatcher/Segmentation exist solely for the throwaway diagnostic test",
+      "description": "PageMatcher.kt carries four public methods explicitly commented as test-only - debugAlignCost, debugSearch, debugCombinedCost, debugCombinedSearch (about 50 lines) - and Segmentation.kt carries columnProfileForDiagnostics, also commented test-only. A repo-wide search shows these are called from exactly one place: SegmentationDiagnosticTest.kt (MAINT-03). They add public API surface to two production classes purely to serve a test file that itself produces no assertions - dead weight riding on top of dead weight.",
+      "locations": [
+        "app/src/main/kotlin/com/tarteelcompanion/extraction/PageMatcher.kt:212-260",
+        "app/src/main/kotlin/com/tarteelcompanion/extraction/Segmentation.kt:197-210"
+      ],
+      "pre_existing": false,
+      "severity": "P2",
+      "confidence": 85,
+      "autofix_class": "manual",
+      "owner": "human",
+      "recommendation": "If SegmentationDiagnosticTest.kt is removed (MAINT-03), remove these debug methods with it. If the diagnostic capability is worth keeping, move it behind test-sourceset-only visibility rather than the production class."
+    },
+    {
+      "id": "MAINT-05",
+      "title": "Identical asset-root/samples-root filesystem-walk bootstrap duplicated across six test files",
+      "description": "The pattern of starting at File(System.getProperty(user.dir)) and walking dir.parentFile upward checking for app/src/main/assets/quran/pages/page-001.json (or samples/) is reimplemented near-verbatim in CardBuilderTest.kt, QuranRepositoryTest.kt, AnchoringPipelineTest.kt, MnemonicRepositoryTest.kt, SpikeHarnessTest.kt, and twice inside SegmentationDiagnosticTest.kt. Each copy also reimplements its own anonymous or local QuranAssetReader. Any change to the dataset layout requires editing six-plus call sites in lockstep.",
+      "locations": [
+        "app/src/test/kotlin/com/tarteelcompanion/study/CardBuilderTest.kt:26-40",
+        "app/src/test/kotlin/com/tarteelcompanion/quran/QuranRepositoryTest.kt:20-47",
+        "app/src/test/kotlin/com/tarteelcompanion/extraction/AnchoringPipelineTest.kt:34-45",
+        "app/src/test/kotlin/com/tarteelcompanion/mnemonics/MnemonicRepositoryTest.kt:53-65",
+        "app/src/test/kotlin/com/tarteelcompanion/extraction/SpikeHarnessTest.kt:22-32",
+        "app/src/test/kotlin/com/tarteelcompanion/extraction/SegmentationDiagnosticTest.kt:18-30,56-62"
+      ],
+      "pre_existing": false,
+      "severity": "P2",
+      "confidence": 85,
+      "autofix_class": "gated_auto",
+      "owner": "downstream-resolver",
+      "recommendation": "Extract a shared test-fixtures helper (e.g. a TestAssets object in src/test with findQuranAssetRoot, findSamplesDir, a shared FileQuranAssetReader) and have all six test classes call it instead of reimplementing the walk-up loop."
+    },
+    {
+      "id": "MAINT-06",
+      "title": "ArchiveScreen and HomeScreen read directly from Room DAOs, bypassing the repository layer used everywhere else",
+      "description": "Every ViewModel (StudyViewModel, QuizViewModel, ImportViewModel) reaches the database exclusively through MistakeRepository/SchedulingPolicy. ArchiveScreen and HomeScreen instead call app.database.spotDao().observeAll() and app.database.importDao().latest() directly from a Composable. ArchiveScreen even mixes styles in the same file: reads bypass the repository but its suspend/reactivate/delete actions correctly go through app.mistakes. Judgment call - MistakeRepository does not currently expose a query method for all spots, so the bypass is pragmatic - but it breaks the layering convention the rest of the codebase follows and couples two UI composables directly to Room DAO internals.",
+      "locations": [
+        "app/src/main/kotlin/com/tarteelcompanion/archive/ArchiveScreen.kt:44",
+        "app/src/main/kotlin/com/tarteelcompanion/home/HomeScreen.kt:54"
+      ],
+      "pre_existing": false,
+      "severity": "P3",
+      "confidence": 50,
+      "autofix_class": "advisory",
+      "owner": "human",
+      "recommendation": "Add observeAll()/latestImport() accessors to MistakeRepository (or a thin read-model) so all DB access flows through the repository, matching the pattern established by StudyViewModel/QuizViewModel/ImportViewModel."
+    },
+    {
+      "id": "MAINT-07",
+      "title": "ManualOnlyPipeline implements ExtractionPipeline but is never instantiated anywhere",
+      "description": "ExtractionPipeline has two implementations: AnchoringPipeline (wired in Navigation.kt) and ManualOnlyPipeline, a fallback pipeline whose extract/anchorAt both unconditionally return NeedsManual. A repo-wide search finds no call site for ManualOnlyPipeline outside its own definition - it is not used as a fallback anywhere, e.g. there is no branch that swaps to it if the Quran dataset fails to load. It currently exists as an unreachable, unreferenced class.",
+      "locations": [
+        "app/src/main/kotlin/com/tarteelcompanion/extraction/ExtractionPipeline.kt:33-40"
+      ],
+      "pre_existing": false,
+      "severity": "P3",
+      "confidence": 80,
+      "autofix_class": "advisory",
+      "owner": "human",
+      "recommendation": "Either wire it in as the actual fallback when quran loading fails, or delete it until it is needed - an unused implementation of a two-implementor interface still reads as premature scaffolding."
+    },
+    {
+      "id": "MAINT-08",
+      "title": "PlaceholderScreen in Navigation.kt is unused dead code",
+      "description": "private fun PlaceholderScreen(title: String) is defined at the bottom of Navigation.kt but has no call sites anywhere in the codebase - every real destination now routes to a real screen. It appears to be a leftover from early scaffolding before the five tab screens were built out.",
+      "locations": [
+        "app/src/main/kotlin/com/tarteelcompanion/ui/Navigation.kt:123-128"
+      ],
+      "pre_existing": false,
+      "severity": "P3",
+      "confidence": 90,
+      "autofix_class": "safe_auto",
+      "owner": "review-fixer",
+      "recommendation": "Delete PlaceholderScreen - no destination references it."
+    }
+  ],
+  "residual_risks": [],
+  "testing_gaps": []
+}

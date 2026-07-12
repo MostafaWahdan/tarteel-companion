@@ -30,6 +30,7 @@ import com.tarteelcompanion.TarteelApp
 import com.tarteelcompanion.quran.QuranRepository
 import com.tarteelcompanion.study.ComparisonSection
 import com.tarteelcompanion.study.GradeBar
+import com.tarteelcompanion.ui.Centered
 import com.tarteelcompanion.ui.PassageText
 
 @Composable
@@ -144,7 +145,3 @@ private fun Question(s: QuizUiState.Question, quran: QuranRepository?, viewModel
     }
 }
 
-@Composable
-private fun Centered(content: @Composable () -> Unit) {
-    Box(Modifier.fillMaxSize().padding(24.dp), contentAlignment = Alignment.Center) { content() }
-}

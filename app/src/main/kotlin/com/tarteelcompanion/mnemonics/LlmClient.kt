@@ -39,7 +39,10 @@ interface LlmClient {
 class GeminiClient(
     private val http: OkHttpClient = OkHttpClient(),
     private val baseUrl: String = "https://generativelanguage.googleapis.com",
-    private val model: String = "gemini-2.5-flash",
+    // The "-latest" alias tracks whatever flash model the key's account tier can use.
+    // Pinned models rot: gemini-2.5-flash 404s for accounts created after ~2026
+    // ("no longer available to new users") even though it appears in the model list.
+    private val model: String = "gemini-flash-latest",
 ) : LlmClient {
 
     private val json = Json { ignoreUnknownKeys = true }

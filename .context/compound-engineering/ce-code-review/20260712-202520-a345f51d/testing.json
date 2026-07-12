@@ -1,0 +1,134 @@
+{
+  "reviewer": "testing",
+  "run_id": "20260712-202520-a345f51d",
+  "findings": [
+    {
+      "id": "T1",
+      "title": "ImportViewModel batch state machine has zero unit tests",
+      "severity": "P2",
+      "file": "app/src/main/kotlin/com/tarteelcompanion/importflow/ImportViewModel.kt",
+      "line": 60,
+      "confidence": 80,
+      "autofix_class": "manual",
+      "owner": "downstream-resolver",
+      "requires_verification": false,
+      "pre_existing": false,
+      "why_it_matters": "ImportViewModel owns the entire F1 batch orchestration: sequential queue draining (processNext), the enqueue() reset/append branching (idle vs mid-batch vs BatchDone re-entry), autoDetect() re-anchoring against a user-entered page, save() converting ImportResult (Saved/DuplicateImage) into saved/discarded/duplicates counters and forwarding lapse/reactivation signals into SchedulingPolicy, and a broad catch(Exception) in load() that silently discards a screenshot on any decode/IO failure. None of this is covered by app/src/test -- grep across app/src/test for ImportViewModel returns zero matches. The codebase already has an established pattern (MnemonicRepositoryTest, MistakeRepositoryTest) for testing suspend-based business logic with fakes plus Robolectric plus kotlinx-coroutines-test; ImportViewModel could be tested the same way by faking ExtractionPipeline/MistakeRepository/SchedulingPolicy. As written, regressions in duplicate handling, the batchTotal recompute logic in enqueue(), or the silent-discard-on-exception path in load() would not be caught by the test suite.",
+      "evidence": [
+        "ImportViewModel.kt:99-108 enqueue() has branching that resets counters only when Idle/BatchDone, easy to get wrong on rapid share-intent arrivals (I4), and is untested",
+        "ImportViewModel.kt:178-185 load() catches Exception broadly and returns null with no test asserting this error path increments discarded and continues the batch",
+        "ImportViewModel.kt:131-143 autoDetect() re-anchors from raw pixels, untested branch for the U4 manual page-entry recovery flow",
+        "grep across app/src/test for ImportViewModel returns no files"
+      ],
+      "suggested_fix": "Add ImportViewModelTest (Robolectric plus coroutines-test, following the MnemonicRepositoryTest fake-collaborator pattern) covering: sequential batch progress across 3+ URIs, duplicate-image rejection surfacing in the BatchDone summary, load() exception path counting as discarded without crashing the batch, autoDetect() replacing the current item's extraction, and lapse/reactivation signals reaching a fake SchedulingPolicy."
+    },
+    {
+      "id": "T2",
+      "title": "QuizViewModel session/grading state machine and summary counting have zero unit tests",
+      "severity": "P2",
+      "file": "app/src/main/kotlin/com/tarteelcompanion/quiz/QuizViewModel.kt",
+      "line": 56,
+      "confidence": 75,
+      "autofix_class": "manual",
+      "owner": "downstream-resolver",
+      "requires_verification": false,
+      "pre_existing": false,
+      "why_it_matters": "QuizViewModel drives the F3 cold-recall loop: loadQueue() building the session (with sessionCap truncation), reveal()/grade()/next() phase transitions, and QuizUiState.Summary's derived passed/returnedToStudy counts that are the only number the user sees at the end of a quiz. The passed count depends on QuizResult.returnedToStudy (grade == AGAIN or HARD) being correctly wired through grade() to the results list; a plausible copy/paste or enum-comparison bug here would silently misreport quiz performance with no test catching it. There is also no coverage of the empty-queue path (QuizUiState.Empty) or of grade() fanning a single card's grade out to every contained spot via policy.quizGrade for multi-spot (merged-passage) cards. grep across app/src/test for QuizViewModel returns zero matches.",
+      "evidence": [
+        "QuizViewModel.kt:44-47 Summary.passed/total are derived UI-facing counts with no test asserting them for a mixed AGAIN/HARD/GOOD/EASY result set",
+        "QuizViewModel.kt:99-108 grade() loops over card.spots to call policy.quizGrade per spot, untested for multi-spot (merged passage) cards",
+        "QuizViewModel.kt:78-95 loadQueue() empty-pending branch (QuizUiState.Empty) and sessionCap truncation are untested",
+        "grep across app/src/test for QuizViewModel returns no files"
+      ],
+      "suggested_fix": "Add QuizViewModelTest with a fake SchedulingPolicy/MistakeRepository/QuranRepository asserting: Summary.passed/total for a known mix of grades, Empty state when quizQueue() returns nothing, sessionCap truncation, and per-spot grade fan-out for a multi-spot card."
+    },
+    {
+      "id": "T3",
+      "title": "StudyViewModel review/grade/mnemonic-trigger flow has zero unit tests",
+      "severity": "P2",
+      "file": "app/src/main/kotlin/com/tarteelcompanion/study/StudyViewModel.kt",
+      "line": 48,
+      "confidence": 75,
+      "autofix_class": "manual",
+      "owner": "downstream-resolver",
+      "requires_verification": false,
+      "pre_existing": false,
+      "why_it_matters": "StudyViewModel is the F2 core loop: review-ahead fallback (loadQueue(ahead=true) only pulls quizExcludedActiveSpots when due is empty), reveal() conditionally calling enqueueGeneration() when any fetched mnemonic is PENDING, grade() fanning a card's grade out to every spot and accumulating a graded count used on SessionDone, and suspendSpot()/deleteSpot() as separate exit paths that must still advance the session correctly. None of this has a test; grep across app/src/test for StudyViewModel returns zero matches. The reviewAhead flag and the PENDING-triggers-generation branch are the kind of one-line conditional that silently flips meaning under refactor without a test to catch it.",
+      "evidence": [
+        "StudyViewModel.kt:76-86 the due.isEmpty() and ahead branching for review-ahead vs empty state is untested",
+        "StudyViewModel.kt:97-104 reveal() triggers enqueueGeneration() only when a fetched mnemonic is PENDING, untested condition",
+        "StudyViewModel.kt:132-146 grade() accumulates graded += card.spots.size and transitions to SessionDone vs next card, untested",
+        "grep across app/src/test for StudyViewModel returns no files"
+      ],
+      "suggested_fix": "Add StudyViewModelTest with fake QuranRepository/MistakeRepository/SchedulingPolicy/MnemonicRepository asserting: review-ahead activates only when due is empty and ahead=true, enqueueGeneration is invoked iff a PENDING mnemonic is present, grade() advances to SessionDone with the correct graded count for multi-spot cards, and suspendSpot/deleteSpot advance the session without grading."
+    },
+    {
+      "id": "T4",
+      "title": "Majority of the test suite silently skips without CI-side dataset provisioning, masking regressions",
+      "severity": "P1",
+      "file": "app/src/test/kotlin/com/tarteelcompanion/quran/QuranRepositoryTest.kt",
+      "line": 50,
+      "confidence": 85,
+      "autofix_class": "manual",
+      "owner": "downstream-resolver",
+      "requires_verification": false,
+      "pre_existing": false,
+      "why_it_matters": "6 of the 9 test files (QuranRepositoryTest, CardBuilderTest, MnemonicRepositoryTest, AnchoringPipelineTest, SegmentationDiagnosticTest, SpikeHarnessTest) gate their real assertions behind assumeTrue(quran != null) / assumeTrue(samples != null), and app/src/main/assets/quran/ (the Quran dataset itself, not just the personal samples/ corpus) is gitignored and only populated by manually running scripts/fetch-datasets.sh. There is no CI configuration in the repo (no .github/workflows, no gradle task wiring fetch-datasets.sh into check/test). In a fresh clone or a CI runner that does not know to run the fetch script first, JUnit's assumeTrue causes these tests to report as ignored/skipped rather than failed, so a full ./gradlew test can report all-green while the extraction pipeline (AnchoringPipeline/PageMatcher/Segmentation, the app's core novel logic), CardBuilder, and MnemonicRepository's dataset-dependent behavior go completely unverified. This is exactly the kind of false-confidence signal the 61 tests / 9 files count implies is real coverage.",
+      "evidence": [
+        "QuranRepositoryTest.kt:50 assumeTrue with message Quran dataset not fetched, run scripts/fetch-datasets.sh, gated on repository != null",
+        "CardBuilderTest.kt:44 and MnemonicRepositoryTest.kt:87 have the same assumeTrue(quran != null) gate",
+        "AnchoringPipelineTest.kt:58 and 63, SpikeHarnessTest.kt:57 gate on both dataset and gitignored samples/",
+        ".gitignore:21 marks app/src/main/assets/quran/ gitignored pending license confirmation (U2 gate)",
+        "no .github/ directory in repo; app/build.gradle.kts has no task wiring scripts/fetch-datasets.sh into the test lifecycle"
+      ],
+      "suggested_fix": "Add a CI workflow (or a Gradle task dependency) that runs scripts/fetch-datasets.sh before ./gradlew test, and make the dataset-gated tests fail loudly (not silently skip) when the dataset is absent in a CI environment. samples/ (personal recitation screenshots) can legitimately remain skip-when-absent since it is not redistributable, but the license-pending Quran dataset should be CI-fetchable and its tests should run in CI once fetched."
+    },
+    {
+      "id": "T5",
+      "title": "GenerationWorker (WorkManager entry point) has no test at all",
+      "severity": "P3",
+      "file": "app/src/main/kotlin/com/tarteelcompanion/mnemonics/GenerationWorker.kt",
+      "line": 20,
+      "confidence": 50,
+      "autofix_class": "manual",
+      "owner": "downstream-resolver",
+      "requires_verification": false,
+      "pre_existing": false,
+      "why_it_matters": "GenerationWorker.doWork() maps MnemonicRepository.generatePending()'s boolean return to Result.success()/Result.retry(), and casts applicationContext to TarteelApp. The underlying generatePending() branching is well covered by MnemonicRepositoryTest, so the risk here is low (thin wrapper), but the Result.success()/Result.retry() mapping itself, the actual contract WorkManager relies on for its exponential-backoff retry policy (GenerationWorker.kt:33-34), is unverified. A flipped boolean or swapped success/retry would not be caught by any existing test.",
+      "evidence": [
+        "GenerationWorker.kt:22-26 doWork() is the only place Result.success()/Result.retry() is chosen; no Robolectric WorkManager test exercises it",
+        "no file under app/src/test references GenerationWorker"
+      ],
+      "suggested_fix": "Add a small Robolectric test using androidx.work TestListenableWorkerBuilder to assert doWork() returns Result.retry() when generatePending() returns false and Result.success() when it returns true, using a fake TarteelApp/MnemonicRepository."
+    },
+    {
+      "id": "T6",
+      "title": "SegmentationDiagnosticTest asserts nothing, contributes to test count without providing regression coverage",
+      "severity": "P3",
+      "file": "app/src/test/kotlin/com/tarteelcompanion/extraction/SegmentationDiagnosticTest.kt",
+      "line": 16,
+      "confidence": 50,
+      "autofix_class": "advisory",
+      "owner": "human",
+      "requires_verification": false,
+      "pre_existing": false,
+      "why_it_matters": "Both tests in this file (dump alignment costs for known pages, dump segmentation structure) only write diagnostic report files to app/build/ and contain zero assertions beyond the assumeTrue skip guard; they cannot fail on a regression even when the corpus is present, since there is no assertEquals/assertTrue on the computed values. The file is explicitly documented as a throwaway diagnostic, which is reasonable intent, but it still lives in the counted test suite (part of the 61 tests figure) and could be mistaken for coverage of Segmentation/PageMatcher correctness when it verifies nothing.",
+      "evidence": [
+        "SegmentationDiagnosticTest.kt:11 doc comment labels the file a throwaway diagnostic that dumps segmentation structure for one sample per page",
+        "SegmentationDiagnosticTest.kt:17-52 and 55-112: both @Test methods only build a report string and write it to a file, no assert call in either method"
+      ],
+      "suggested_fix": "Either move this to a manual/dev-only script outside app/src/test (so it does not inflate the test count), or add minimal sanity assertions (e.g. lines.isNotEmpty(), no exceptions on the worst-line dump) so it at least fails loudly on a crash regression."
+    }
+  ],
+  "residual_risks": [
+    "ImportViewModel, QuizViewModel, and StudyViewModel remain entirely unverified by automated tests; any refactor of their state machines carries real regression risk until unit tests are added.",
+    "There is no instrumented test suite and no CI configuration in the repo at all, so even the Robolectric unit tests that do exist are only as reliable as each developer's local run discipline (manually fetching datasets, remembering to run ./gradlew test)."
+  ],
+  "testing_gaps": [
+    "ImportViewModel (importflow/ImportViewModel.kt): batch state machine, duplicate handling, autoDetect, load()-exception discard path, no tests.",
+    "QuizViewModel (quiz/QuizViewModel.kt): summary passed/total counting, sessionCap truncation, multi-spot grade fan-out, empty-queue path, no tests.",
+    "StudyViewModel (study/StudyViewModel.kt): review-ahead branching, mnemonic-generation trigger condition, grade fan-out and SessionDone accounting, suspend/delete exit paths, no tests.",
+    "GenerationWorker (mnemonics/GenerationWorker.kt): Result.success()/Result.retry() mapping is unverified by any test.",
+    "6 of 9 test files gate on assumeTrue(dataset present); with no CI workflow and a gitignored dataset directory, these tests are likely to silently skip rather than run in most automated contexts."
+  ]
+}

@@ -84,6 +84,9 @@ class ImportViewModel(
         /** Decode-bounds cap: reject absurd inputs before full decode (security FYI). */
         const val MAX_DIMENSION_PX = 8_000
 
+        /** Raw-stream ceiling for shared images — screenshots are well under this. */
+        const val MAX_IMPORT_BYTES = 50L * 1_000_000
+
         /** Working size for extraction/display; screenshots are downsampled to fit. */
         const val TARGET_MAX_PX = 2_000
 
@@ -185,7 +188,24 @@ class ImportViewModel(
     }
 
     private suspend fun loadUnsafe(uri: Uri, pageHint: Int?): ImportItem? {
-        val bytes = appContext.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+        // Bounded read: the share target accepts streams from any app, and readBytes()
+        // on an unbounded stream would buffer it fully before any size check (OOM).
+        val bytes = appContext.contentResolver.openInputStream(uri)?.use { stream ->
+            val buffer = java.io.ByteArrayOutputStream()
+            val chunk = ByteArray(64 * 1024)
+            var total = 0L
+            while (true) {
+                val read = stream.read(chunk)
+                if (read < 0) break
+                total += read
+                if (total > MAX_IMPORT_BYTES) {
+                    android.util.Log.w(TAG, "stream exceeds ${MAX_IMPORT_BYTES / 1_000_000}MB for $uri")
+                    return null
+                }
+                buffer.write(chunk, 0, read)
+            }
+            buffer.toByteArray()
+        }
         if (bytes == null) {
             android.util.Log.w(TAG, "no stream for $uri")
             return null

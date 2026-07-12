@@ -1,0 +1,149 @@
+{
+  "reviewer": "correctness",
+  "run_id": "20260712-202520-a345f51d",
+  "scope": "branch feat/v1-core-loop vs 869818a (entire v1 implementation)",
+  "findings": [
+    {
+      "title": "Graduation fires after a real-world lapse: occurrenceLapse inflates scheduledIntervalDays so a just-failed mature spot graduates on the next quiz Good",
+      "severity": "P1",
+      "file": "app/src/main/kotlin/com/tarteelcompanion/srs/SchedulingPolicy.kt",
+      "line": 122,
+      "confidence": 75,
+      "autofix_class": "gated_auto",
+      "owner": "downstream-resolver",
+      "requires_verification": true,
+      "pre_existing": false,
+      "why_it_matters": "Invariant 3 intends graduation to mean proved 21-day retention confirmed by a cold quiz. Fsrs.occurrenceLapse (Fsrs.kt:107-118) sets dueEpochDay=today but keeps lastReviewEpochDay unchanged, so State.scheduledIntervalDays (Fsrs.kt:44-47) becomes elapsed-time-at-failure, not a sustained interval. Trace: spot lastReview=day0, due=day30. Day 25: new Tarteel occurrence -> applyOccurrenceLapse -> phase=RELEARNING, due=25, lastReview=0. Day 25: studyGrade logs pre-snapshot = that lapsed state (preDue=25, preLastReview=0). Day 26: quizGrade GOOD; lapsedAfterStudy=false (occurrence import preceded the study), so base = pre-study snapshot; base.scheduledIntervalDays = 25 >= 21 -> matured -> state=GRADUATED. A spot that demonstrably failed one day earlier leaves the review system entirely. SchedulingPolicyTest covers only the lapse-AFTER-study ordering (where lastReview==studyDay makes the interval 0), not lapse-before-study, which is the common import->study->quiz order.",
+      "evidence": [
+        "SchedulingPolicy.kt:122 val matured = base.scheduledIntervalDays >= GRADUATION_INTERVAL_DAYS -- no phase check",
+        "Fsrs.kt:107-118 occurrenceLapse: dueEpochDay = todayEpochDay, lastReviewEpochDay = state.lastReviewEpochDay (unchanged)",
+        "Fsrs.kt:44-47 scheduledIntervalDays = max(0, due - lastReview) -- reads 25 in the trace above",
+        "SchedulingPolicyTest.kt:118-143 tests only occurrence AFTER study; its comment (adversarial finding 2) shows graduation-after-lapse is explicitly unwanted"
+      ],
+      "suggested_fix": "Gate graduation on the replay base being a genuine review-phase interval: val matured = base.phase == Fsrs.Phase.REVIEW && base.scheduledIntervalDays >= GRADUATION_INTERVAL_DAYS. occurrenceLapse always leaves the base in RELEARNING, so a lapsed cycle can never graduate; the existing graduation test (prePhase=REVIEW) still passes."
+    },
+    {
+      "title": "isQuizPending compares a UTC epoch-day (millis/86400000) against a local-timezone epoch day, breaking the next-calendar-day rule",
+      "severity": "P2",
+      "file": "app/src/main/kotlin/com/tarteelcompanion/srs/SchedulingPolicy.kt",
+      "line": 59,
+      "confidence": 75,
+      "autofix_class": "gated_auto",
+      "owner": "downstream-resolver",
+      "requires_verification": true,
+      "pre_existing": false,
+      "why_it_matters": "studyDay = reviewedAtEpochMillis / 86_400_000 is the UTC calendar day, while every caller passes todayEpochDay = LocalDate.now().toEpochDay() in the device zone (QuizViewModel.kt:71, StudyViewModel.kt:64, HomeScreen.kt:50). In UTC+N zones (e.g. Egypt/Saudi, the likely audience), a study at 00:30 local lands on the previous UTC day, so todayEpochDay > studyDay is already true the SAME local day and the quiz unlocks after just the 10h floor (11:00 that morning), violating the documented next-calendar-day rule (line 51) and the cold-recall intent. In UTC-N zones an evening study maps to the NEXT UTC day, delaying quiz eligibility by a full extra day. Tests do not catch it because they fabricate millis as day*86_400_000 (UTC-aligned).",
+      "evidence": [
+        "SchedulingPolicy.kt:59 val studyDay = study.reviewedAtEpochMillis / 86_400_000L",
+        "SchedulingPolicy.kt:61 return todayEpochDay > studyDay && gapOk",
+        "QuizViewModel.kt:71 private fun today() = LocalDate.now().toEpochDay() -- local-date epoch day",
+        "SchedulingPolicyTest.kt:35 test clock at(day, hour) = day * 86_400_000L + ... is UTC-aligned, hiding the mismatch"
+      ],
+      "suggested_fix": "Convert the review timestamp to the same local calendar: Instant.ofEpochMilli(study.reviewedAtEpochMillis).atZone(ZoneId.systemDefault()).toLocalDate().toEpochDay(), or inject a millis-to-epochDay function into SchedulingPolicy so tests stay deterministic."
+    },
+    {
+      "title": "Same-day occurrence collapse keeps the FIRST import's importId, so quizGrade's lapsed-after-study detection misses an evening lapse -- the exact case its comment claims to guard",
+      "severity": "P2",
+      "file": "app/src/main/kotlin/com/tarteelcompanion/data/MistakeRepository.kt",
+      "line": 118,
+      "confidence": 70,
+      "autofix_class": "gated_auto",
+      "owner": "downstream-resolver",
+      "requires_verification": true,
+      "pre_existing": false,
+      "why_it_matters": "quizGrade decides whether the cycle was re-based by comparing the latest occurrence's import timestamp with the study timestamp (SchedulingPolicy.kt:93-96; the comment says an evening Tarteel failure after a morning study must not be erased by the next-day quiz). But when the same word was already imported earlier that day, the evening import only does sameDay.copy(hitCount+1, type=...) and keeps the MORNING importId. Trace: import 09:00 (occurrence created, importId=A), study 10:00, import 20:00 (pendingLapse set, occurrence collapsed, importId stays A; ImportViewModel.save applies the lapse). Next-day quiz: latestForSpot -> importId A -> 09:00 < 10:00 -> lapsedAfterStudy=false -> base = pre-study snapshot -> persist overwrites the applied lapse, erasing the live failure. U7 invariant 4 (live failure outranks the quiz) is violated exactly when the user recites the same passage twice in a day.",
+      "evidence": [
+        "MistakeRepository.kt:117-119 sameDay.copy(hitCount = sameDay.hitCount + 1, type = detection.type) -- importId not updated",
+        "SchedulingPolicy.kt:93-96 lapsedAfterStudy resolves the occurrence's import via occ.importId and compares importedAtEpochMillis to the study time",
+        "Daos.kt:50-51 latestForSpot orders by epochDay/id -- returns the collapsed row with the stale importId"
+      ],
+      "suggested_fix": "On collapse, also advance the import pointer: sameDay.copy(hitCount = sameDay.hitCount + 1, type = detection.type, importId = importId), so the occurrence always references the most recent evidence for that day."
+    },
+    {
+      "title": "ConfirmTagScreen: changing the page number keeps marks anchored to the previous page's words; Save persists detections that are no longer visible",
+      "severity": "P2",
+      "file": "app/src/main/kotlin/com/tarteelcompanion/importflow/ConfirmTagScreen.kt",
+      "line": 173,
+      "confidence": 65,
+      "autofix_class": "gated_auto",
+      "owner": "downstream-resolver",
+      "requires_verification": true,
+      "pre_existing": false,
+      "why_it_matters": "marks is keyed only by remember(initialDetections) (line 69). The documented Wrong-page exit just edits pageInput -- it does not clear or filter marks. If extraction pre-marked words on page N and the user corrects the page to N+1 without tapping Auto-detect, the page-N WordRefs stay in marks, render nowhere (page N+1 shows different refs), and onSave (line 173) persists them as real mistake spots on words the user never saw or confirmed. This breaches the R5 confirm-is-authority contract: spots get created/lapsed at wrong canonical positions and enter the SRS queue.",
+      "evidence": [
+        "ConfirmTagScreen.kt:69-73 marks initialized once per initialDetections; no reset on pageInput change",
+        "ConfirmTagScreen.kt:75-76 displayed page derives from pageInput; stale refs simply do not render",
+        "ConfirmTagScreen.kt:173 onSave(pageNumber, marks.map { (ref, type) -> Detection(ref, type) }) saves ALL marks regardless of visibility"
+      ],
+      "suggested_fix": "Filter to the visible page at save time: build the set of refs on the displayed page and save marks.filterKeys { it in visibleRefs }; optionally count only visible marks in the button label. Alternative: clear extraction-sourced marks whenever pageNumber changes away from initialPage."
+    },
+    {
+      "title": "Grade/save/discard handlers advance the session state machine inside coroutines with buttons still enabled -- a double tap double-applies FSRS grades and skips cards/screenshots",
+      "severity": "P3",
+      "file": "app/src/main/kotlin/com/tarteelcompanion/study/StudyViewModel.kt",
+      "line": 132,
+      "confidence": 50,
+      "autofix_class": "gated_auto",
+      "owner": "downstream-resolver",
+      "requires_verification": true,
+      "pre_existing": false,
+      "why_it_matters": "StudyViewModel.grade reads cards.getOrNull(index) synchronously and does the studyGrade fan-out plus index++ inside viewModelScope.launch. Two rapid taps both capture the SAME card before either coroutine runs: the spot is graded twice (the second Fsrs.grade builds on the first, and the quiz replay then bases on the second study log's inflated pre-snapshot) and index jumps by 2, silently skipping the next card. QuizViewModel.grade (QuizViewModel.kt:99-108) similarly appends duplicate QuizResult rows (summary counts wrong) and logs duplicate QUIZ reviews. ImportViewModel.discard/save double-taps pop two queue items, clobbering the Confirming state for one screenshot. Requires a double tap, hence confidence capped at 50.",
+      "evidence": [
+        "StudyViewModel.kt:132-146 card captured before launch; index++ inside the coroutine; GradeBar buttons never disabled",
+        "QuizViewModel.kt:99-108 same pattern; results list can exceed cards.size",
+        "ImportViewModel.kt:173-176 discard() has no in-flight/state guard"
+      ],
+      "suggested_fix": "Add a per-card in-flight guard (ignore grade() while a grade coroutine is pending), or advance the UI phase synchronously before launching the persistence coroutine so a second tap hits a different phase and no-ops."
+    },
+    {
+      "title": "Segmentation.findWords ignores its wordGapFraction parameter -- the documented column-gap tuning knob has no effect",
+      "severity": "P3",
+      "file": "app/src/main/kotlin/com/tarteelcompanion/extraction/Segmentation.kt",
+      "line": 148,
+      "confidence": 75,
+      "autofix_class": "advisory",
+      "owner": "human",
+      "requires_verification": false,
+      "pre_existing": false,
+      "why_it_matters": "findWords and segment accept a gap fraction (DEFAULT_WORD_GAP_FRACTION = 0.13 exposed as a const) and the KDoc describes word clusters via column-gap analysis, but the body only merges runs closer than the fixed RUN_MERGE_PX = 3 and never reads wordGapFraction. Any caller (test harness, future calibration) passing a custom fraction silently gets identical output -- an intent-vs-implementation mismatch that will mislead tuning. Not a runtime bug today since the PageMatcher DP treats runs as the primitive.",
+      "evidence": [
+        "Segmentation.kt:144-188 wordGapFraction declared but unreferenced in the function body",
+        "Segmentation.kt:34 DEFAULT_WORD_GAP_FRACTION = 0.13 exists only to feed the dead parameter"
+      ],
+      "suggested_fix": "Remove the parameter and constant (and update the KDoc to describe run-merge plus DP alignment), or actually apply it as the intra-line gap threshold. Advisory because removal touches public signatures used by tests."
+    },
+    {
+      "title": "Archive Reactivate on a GRADUATED spot leaves graduatedAtEpochDay set and keeps the far-future due date, so the spot stays invisible in study for weeks",
+      "severity": "P3",
+      "file": "app/src/main/kotlin/com/tarteelcompanion/data/MistakeRepository.kt",
+      "line": 134,
+      "confidence": 55,
+      "autofix_class": "gated_auto",
+      "owner": "downstream-resolver",
+      "requires_verification": true,
+      "pre_existing": false,
+      "why_it_matters": "reactivate() only flips state to ACTIVE. For a spot the user deliberately reactivates from the Archive (ArchiveScreen.kt:132-133), the FSRS due date is whatever the graduating quiz set (today plus a mature interval, typically >= 21 days) and graduatedAtEpochDay stays non-null on an ACTIVE spot (inconsistent record). The import path (MistakeRepository.kt:88-98) nulls graduatedAtEpochDay, sets due=today and signals a lapse -- the two reactivation paths diverge. A user tapping Reactivate expects the spot to re-enter the loop, but it will not be due for weeks and nothing indicates why.",
+      "evidence": [
+        "MistakeRepository.kt:144-147 setState copies only state",
+        "MistakeRepository.kt:88-97 import-driven reactivation resets graduatedAtEpochDay and dueEpochDay",
+        "Daos.kt:27-29 dueOn filters by dueEpochDay, so the stale future due date controls visibility"
+      ],
+      "suggested_fix": "In reactivate(), when the prior state is GRADUATED, also clear graduatedAtEpochDay and set dueEpochDay = today (optionally via SchedulingPolicy to respect the single-scheduling-authority doc), matching the import path's semantics."
+    }
+  ],
+  "residual_risks": [
+    "PageMatcher width-model anchoring can pass the ACCEPT_COST gate yet slot a colored cluster to a neighboring word (proportional-unit slotting in AnchoringPipeline.anchored is heuristic); the confirm screen is the only mitigation and users may rubber-stamp pre-marked words.",
+    "StudyViewModel/QuizViewModel load their queues only in init; with bottom-nav saveState/restoreState the ViewModels survive tab switches, so Study/Quiz/Home can show stale queues or a stale Summary until process death.",
+    "GenerationWorker retries indefinitely (Result.retry) while no API key is saved; combined with ExistingWorkPolicy.KEEP, a later enqueue is a no-op by design and relies on the retry chain surviving.",
+    "Segmentation.Band init indexes all[all.size/2] and alignToPage indexes sorted()[runs.size/2]; degenerate inputs (text band height 0) would throw, but they are unreachable via the guarded import path except through autoDetect on a pathological bitmap.",
+    "ImportViewModel.enqueue during an active batch appends to the queue but the displayed total in the current Confirming state is stale until the next state emission (cosmetic)."
+  ],
+  "testing_gaps": [
+    "No test for the import->study->quiz order where the occurrence lapse precedes the study (only lapse-after-study is tested) -- would have caught the graduation-after-lapse finding.",
+    "No test exercising isQuizPending with a non-UTC-aligned clock; all tests fabricate millis as day*86_400_000, so the local/UTC day mismatch is invisible.",
+    "No test for two same-day imports of the same word straddling a study (occurrence collapse plus lapsedAfterStudy interaction).",
+    "No state-machine tests for double-invocation of grade()/save()/discard() idempotency.",
+    "No test that ConfirmTagScreen save output is restricted to words on the finally-selected page.",
+    "alignToPage's proportional fallback branch (stage-2 align returns null) has no direct test asserting the assigned token ranges."
+  ]
+}

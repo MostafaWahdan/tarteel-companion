@@ -1,0 +1,63 @@
+{
+  "reviewer": "performance",
+  "run_id": "20260712-202520-a345f51d",
+  "scope": "repo D:\tarteel-companion, branch feat/v1-core-loop, base 869818a, entire implementation",
+  "findings": [
+    {
+      "id": "perf-1-pagematcher-tokens-per-image",
+      "title": "PageMatcher.pageTokens re-tokenizes all 604 pages on every screenshot in an import batch",
+      "confidence": 90,
+      "severity": "P2",
+      "autofix_class": "gated_auto",
+      "owner": "downstream-resolver",
+      "files": [
+        "app/src/main/kotlin/com/tarteelcompanion/extraction/PageMatcher.kt:59-69",
+        "app/src/main/kotlin/com/tarteelcompanion/extraction/AnchoringPipeline.kt:14-16",
+        "app/src/main/kotlin/com/tarteelcompanion/importflow/ImportScreen.kt:38",
+        "app/src/main/kotlin/com/tarteelcompanion/importflow/ImportViewModel.kt:134-143,187-219"
+      ],
+      "description": "PageMatcher.pageTokens is a lazy val that maps (1..604) and for each page flattens its lines words and computes wordUnits per word, building tens of thousands of Token objects, even though alignToPage only ever needs the tokens for ONE known page. The laziness only memoizes within a single PageMatcher instance, but ImportScreen wires pipelineProvider to construct a new AnchoringPipeline (and therefore a new PageMatcher) on every call, and ImportViewModel invokes pipelineProvider() once per screenshot in loadUnsafe (the batch loop) and again in autoDetect on manual page correction. So the full 604-page tokenization runs from scratch for every single image in a batch instead of once total, directly inflating the per-item processing time behind the batch progress UI.",
+      "recommendation": "Share one PageMatcher (or its pageTokens table) across the whole import batch/session instead of constructing a fresh one per pipelineProvider() call, or make pageTokens populate lazily per-page on demand instead of eagerly for all 604 pages.",
+      "pre_existing": false
+    },
+    {
+      "id": "perf-2-isquizpending-n-plus-1",
+      "title": "isQuizPending does a full review_log table scan per spot inside studyQueue/quizQueue/quizExcludedActiveSpots",
+      "confidence": 80,
+      "severity": "P2",
+      "autofix_class": "gated_auto",
+      "owner": "downstream-resolver",
+      "files": [
+        "app/src/main/kotlin/com/tarteelcompanion/srs/SchedulingPolicy.kt:37-67",
+        "app/src/main/kotlin/com/tarteelcompanion/data/dao/Daos.kt:79-94"
+      ],
+      "description": "studyQueue, quizQueue, and quizExcludedActiveSpots each call isQuizPending once per spot via filter/filterNot. isQuizPending issues reviewLogDao().forSpot(spotId), fetching and materializing EVERY review_log row for that spot just to run an any{} check in Kotlin, on top of a separate latestStudy query. This is an N+1 over spots (hundreds, per the stated scale), and each per-spot scan grows unbounded as review_log accumulates over months of daily study/quiz cycles. Both StudyViewModel and QuizViewModel call these on every screen load.",
+      "recommendation": "Replace forSpot(spotId) plus the Kotlin any{} with a single indexed existence query keyed on spotId and a timestamp threshold, or batch the whole pending computation into one query across all candidate spot ids instead of looping per spot from Kotlin.",
+      "pre_existing": false
+    },
+    {
+      "id": "perf-3-segmentation-double-scan",
+      "title": "Segmentation.findWords re-scans every line row's pixels twice and rebuilds a fresh Band per line",
+      "confidence": 65,
+      "severity": "P3",
+      "autofix_class": "manual",
+      "owner": "human",
+      "files": [
+        "app/src/main/kotlin/com/tarteelcompanion/extraction/Segmentation.kt:91-95,144-159,198-210"
+      ],
+      "description": "findLines already runs isInk across the full text band once to detect line boundaries. findWords is then called per detected line and constructs a brand-new Band for that line's rows (recomputing per-row background already covered by findLines' Band), then for each row calls isArtifactRow (a full-width isInk scan) and, if not an artifact row, scans the same row again with isInk to populate colInk. Non-artifact rows inside detected lines therefore get isInk evaluated roughly twice more on top of the line-detection pass, and each isInk call does up to five luminance computations. columnProfileForDiagnostics repeats the same pattern. This adds real per-image CPU work during batch import.",
+      "recommendation": "Reuse the Band already built by findLines instead of constructing a new one per line, and fold isArtifactRow's ink count and colInk's per-pixel flag into a single pass over each row instead of two.",
+      "pre_existing": false
+    }
+  ],
+  "residual_risks": [
+    "QuranRepository.load parses 604 page JSON files and retains roughly 77k QuranWord objects plus several derived maps for the app's lifetime. This is intentional, already off the main thread via TarteelApp's Deferred quran property, and documented as a one to two second one-time cost -- acceptable for a personal app's startup, but worth revisiting if perf-1's fix introduces an additional long-lived cache of the same word data.",
+    "GeminiClient.generate makes a synchronous OkHttp execute() call inside MnemonicRepository.generatePending's loop, invoked from a CoroutineWorker running on the default dispatcher rather than an IO-dispatched context. At the stated scale (a handful of pending mnemonics, one WorkManager job at a time) this is unlikely to be felt but is a dispatcher-hygiene issue worth a follow-up if generation volume grows.",
+    "ArchiveScreen observes the entire spots table via a Flow that re-emits on any write to that table, and groups the list by surah unmemoized on every recomposition. At the stated scale of hundreds of spots this is not a measurable problem and was intentionally not flagged as a finding."
+  ],
+  "testing_gaps": [
+    "No test or benchmark measures import-batch wall-clock time as batch size grows, which would have caught the per-image PageMatcher re-tokenization cost directly.",
+    "No test asserts on the number of DB queries issued by SchedulingPolicy studyQueue/quizQueue relative to queue size or review_log size, which would catch regressions in the isQuizPending N+1 as spot and history counts grow over time.",
+    "No test measures Segmentation.segment wall-clock or allocation cost on a representative full-resolution screenshot to catch regressions in the per-pixel isInk work."
+  ]
+}

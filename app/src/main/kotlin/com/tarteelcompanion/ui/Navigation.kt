@@ -120,9 +120,3 @@ fun TarteelCompanionApp() {
     }
 }
 
-@Composable
-private fun PlaceholderScreen(title: String) {
-    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-        Text(text = title, style = MaterialTheme.typography.headlineMedium)
-    }
-}

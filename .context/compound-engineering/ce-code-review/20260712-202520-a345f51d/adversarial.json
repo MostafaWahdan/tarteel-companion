@@ -1,0 +1,218 @@
+{
+  "reviewer": "adversarial",
+  "run_id": "20260712-202520-a345f51d",
+  "scope": "feat/v1-core-loop vs 869818a, entire app/ implementation",
+  "depth": "deep",
+  "findings": [
+    {
+      "id": "ADV-1",
+      "title": "Batch page-hint anchors screenshot k+1 at page k with no runner-up margin - adjacent-page anchors pass the gate and fabricate wrong-word spots",
+      "severity": "P1",
+      "confidence": 75,
+      "pre_existing": false,
+      "autofix_class": "advisory",
+      "owner": "human",
+      "files": [
+        "app/src/main/kotlin/com/tarteelcompanion/extraction/AnchoringPipeline.kt:24-37",
+        "app/src/main/kotlin/com/tarteelcompanion/extraction/PageMatcher.kt:39,268-305",
+        "app/src/main/kotlin/com/tarteelcompanion/importflow/ImportViewModel.kt:69,120,157"
+      ],
+      "why_it_matters": "Invariant under attack: 'extraction never fabricates anchors'. alignToPage gates only on lineCost <= ACCEPT_COST (0.15) plus a pixel-scale sanity check. RUNNER_UP_MARGIN (1.15) is declared at PageMatcher.kt:39 and used nowhere in the production path (grep: only occurrence is the declaration; debugSearch computes second-best cost but is test-only). PageMatcher's own doc comment records the corpus finding that adjacent pages score too similarly for a safe auto-pick, i.e. the wrong-but-adjacent page routinely costs close to the true page, plausibly under 0.15. The batch flow makes the wrong hint the NORMAL case: ImportViewModel.load passes lastConfirmedPage as the hint, and a multi-page Tarteel session (the primary batching use case) means screenshot 2 shows page N+1 but is anchored directly at page N (AnchoringPipeline.extract anchors directly at the hint - no neighborhood search, no margin). When the adjacent page fits under 0.15, Extracted carries the wrong pageNumber and detections mapped to the wrong page's words. The confirm screen renders page N with plausible pre-populated marks; one hurried Save creates spots at Quran positions the user never failed, and the SRS drills wrong verses while the real mistakes are lost. The only defense is the user visually diffing Arabic text against the screenshot.",
+      "evidence": [
+        "Trigger: user recites pages 163-164 in one session, screenshots both, imports as a batch. Screenshot 1 confirmed at 163 -> lastConfirmedPage=163 (ImportViewModel.kt:157).",
+        "Step: processNext -> load(uri2, 163) -> extract(pixels, w, h, 163) -> anchorAt(..., 163) on a page-164 screenshot (AnchoringPipeline.kt:24-28).",
+        "Step: alignToPage(runs, 163): line-DP self-normalizes px-per-unit; adjacent Madani pages have 15 lines with near-identical aggregate widths. If lineCost <= 0.15 the alignment returns non-null; no second page's cost is ever computed, so the declared RUNNER_UP_MARGIN never applies.",
+        "Failure: Extracted(pageNumber=163, detections on page-163 refs) for a page-164 screenshot -> ConfirmTagScreen pre-populates marks -> Save -> recordImport creates spots at wrong WordRefs.",
+        "Corroboration: AnchoringPipelineTest never asserts anchorAt(pixels-of-163, page=162 or 164) gates; only page 1 (wildly wrong) is tested (AnchoringPipelineTest.kt:161-167)."
+      ],
+      "suggested_direction": "When anchoring from a batch hint, score hint-1/hint/hint+1 and require best*RUNNER_UP_MARGIN < second-best before auto-anchoring; otherwise route to manual with the hint prefilled. Consider the same neighbor check for user-typed pages."
+    },
+    {
+      "id": "ADV-2",
+      "title": "ConfirmTagScreen keeps invisible stale marks when the user corrects the page number by typing - Save silently records detections on the rejected page",
+      "severity": "P1",
+      "confidence": 75,
+      "pre_existing": false,
+      "autofix_class": "manual",
+      "owner": "downstream-resolver",
+      "files": [
+        "app/src/main/kotlin/com/tarteelcompanion/importflow/ConfirmTagScreen.kt:67-76,146-176"
+      ],
+      "why_it_matters": "The marks map is remember(initialDetections)-keyed (line 69) while the rendered page follows pageInput (lines 75-76). Typing a different page number re-renders the canonical page but does NOT clear marks. Marks keyed by old-page WordRefs become invisible (no matching word.ref on the new page) yet are still submitted by Save (line 173). Composed with ADV-1 this defeats the 'confirm screen is the authority' mitigation: extraction anchors the wrong page with pre-populated detections, the user notices, fixes the page number by typing (Auto-detect is optional), taps the correct words, and Save writes BOTH the corrected detections and the stale wrong-page detections under the corrected pageNumber. The only tell is the Save button count exceeding visible marks.",
+      "evidence": [
+        "Trigger: Extracted(163, 3 detections) for a page-164 screenshot. Screen shows page 163 with 3 colored words.",
+        "Step: user edits page field to 164. remember key (initialDetections) unchanged -> marks still holds the three page-163 refs; page 164 renders with zero visible marks.",
+        "Step: user taps 2 words on page 164 -> marks has 5 entries, 2 visible; button reads 'Save 5 mistake(s)'.",
+        "Failure: onSave(164, 5 detections) -> 3 spots created at page-163 positions the user explicitly rejected; scheduler drills wrong verses.",
+        "Note: pageInput's remember key is initialPage, so manual typing changes neither key - keying marks on the page cannot happen implicitly."
+      ],
+      "suggested_direction": "Clear or filter marks whenever the effective pageNumber changes, or filter detections at Save to refs present on the rendered page."
+    },
+    {
+      "id": "ADV-3",
+      "title": "Same-day occurrence collapse keeps the morning importId - next-day quiz replays from the pre-study snapshot and erases an already-applied evening lapse (invariant 4 violated)",
+      "severity": "P1",
+      "confidence": 75,
+      "pre_existing": false,
+      "autofix_class": "manual",
+      "owner": "downstream-resolver",
+      "files": [
+        "app/src/main/kotlin/com/tarteelcompanion/data/MistakeRepository.kt:106-120",
+        "app/src/main/kotlin/com/tarteelcompanion/srs/SchedulingPolicy.kt:86-111"
+      ],
+      "why_it_matters": "quizGrade decides lapsedAfterStudy by comparing the latest occurrence's IMPORT timestamp to the study timestamp (SchedulingPolicy.kt:93-96) because occurrences are day-granular. But recordImport collapses a second same-day detection into the existing occurrence row via hitCount++ and keeps the ORIGINAL importId (MistakeRepository.kt:117-119). So: morning import fails the spot, noon study, evening import fails it again - the collapsed occurrence still points at the MORNING import whose millis precede the study. lapsedAfterStudy computes FALSE, the quiz replays from the pre-study snapshot, and a Good/Easy grade overwrites the lapsed FSRS state that applyOccurrenceLapse had correctly written after the evening import. 'Live failure outranks the quiz' (plan U7 invariant 4, quoted in the code) is silently reversed: the spot leaves relearning on a confirmed forward interval despite a live recitation failure the previous evening.",
+      "evidence": [
+        "Day N 08:00: import A fails active spot S -> occurrence(S, dayN, importId=A) inserted; pendingLapse set; ImportViewModel applies applyOccurrenceLapse (relearning, due dayN).",
+        "Day N 12:00: studyGrade(S, GOOD) -> STUDY log at 12:00, pre-snapshot = morning-lapsed state; spot scheduled forward.",
+        "Day N 20:00: import B fails S again -> ACTIVE branch sets pendingLapse, lapsedSpots += S; occurrence branch finds forSpotOnDay(S, dayN) -> update(hitCount=2, type) - importId stays A (08:00). ImportViewModel applies applyOccurrenceLapse: stability dropped, RELEARNING due dayN. Correct so far.",
+        "Day N+1: isQuizPending true. quizGrade(S, GOOD): pendingLapse already false; latestForSpot -> collapsed occurrence -> importDao.byId(A).importedAtEpochMillis = dayN 08:00 < study 12:00 -> lapsedAfterStudy = FALSE.",
+        "Failure: base = pre-study snapshot (SchedulingPolicy.kt:98-105); Fsrs.grade(base, GOOD) persisted -> the evening lapse is overwritten; the second real-world failure has zero scheduling effect.",
+        "SchedulingPolicyTest's 'occurrence during open cycle re-bases the pending quiz' covers only a FIRST occurrence of the day, so the suite passes."
+      ],
+      "suggested_direction": "On collapse, also update the occurrence's importId to the latest import (the row means 'most recent evidence that day'), or compare against the max import millis across that day's imports for the spot."
+    },
+    {
+      "id": "ADV-4",
+      "title": "isQuizPending mixes UTC day floor (millis/86400000) with local-timezone epoch days - same-local-day quizzes east of UTC, systematic one-day quiz delays west of UTC",
+      "severity": "P2",
+      "confidence": 75,
+      "pre_existing": false,
+      "autofix_class": "manual",
+      "owner": "downstream-resolver",
+      "files": [
+        "app/src/main/kotlin/com/tarteelcompanion/srs/SchedulingPolicy.kt:53-62",
+        "app/src/main/kotlin/com/tarteelcompanion/quiz/QuizViewModel.kt:71-72",
+        "app/src/main/kotlin/com/tarteelcompanion/study/StudyViewModel.kt:64-65"
+      ],
+      "why_it_matters": "studyDay = reviewedAtEpochMillis / 86_400_000 is the UTC calendar day; todayEpochDay comes from LocalDate.now().toEpochDay() - the LOCAL calendar day (all callers). The R15 'next calendar day' rule therefore compares a UTC day to a local day. East of UTC (likely user base, UTC+2/+3): a study at 00:30 local day N is UTC 21:30 day N-1 -> studyDay=N-1; at 10:31 local the SAME day, todayEpochDay=N > N-1 and the 10h gap holds -> quiz eligible the same local calendar day as the study - the exact 'midnight loophole' DEFAULT_MIN_QUIZ_GAP_HOURS claims to close (post-isha and tahajjud study between local 00:00-03:00 is realistic for this audience). West of UTC (UTC-5): study at 21:00 local day N is UTC 02:00 day N+1 -> studyDay=N+1; on local day N+1, N+1 > N+1 is false -> quiz withheld until day N+2 - every evening study slips its quiz by a full day. Tests pass because they fabricate millis as day*86400000+hours, an implicit UTC user.",
+      "evidence": [
+        "Mechanics verifiable from code: SchedulingPolicy.kt:59 (UTC floor) vs QuizViewModel.kt:71 / StudyViewModel.kt:64 (LocalDate.now local).",
+        "Cairo (UTC+3): study 00:30 local day N -> millis floor N-1; quiz 10:31 local day N -> N > N-1, gap 10h01m -> isQuizPending TRUE same local day (R15 violated).",
+        "New York (UTC-5): study 21:00 local day N -> millis floor N+1; all of local day N+1: not pending; eligible only day N+2 (26h+ minimum; one lost review day per cycle for evening studiers).",
+        "dueEpochDay written by grading is local-derived, so due dates and studyDay permanently live in different calendars; DST shifts move the mismatch window."
+      ],
+      "suggested_direction": "Derive studyDay in the caller's calendar: store the local epochDay on the ReviewLog row at grade time, or convert via Instant.atZone(ZoneId.systemDefault()).toLocalDate().toEpochDay()."
+    },
+    {
+      "id": "ADV-5",
+      "title": "Failed Auto-detect destroys a successful extraction: NeedsManual overwrites item.extraction, resetting the page field to '1' and wiping pre-populated detections",
+      "severity": "P2",
+      "confidence": 75,
+      "pre_existing": false,
+      "autofix_class": "manual",
+      "owner": "downstream-resolver",
+      "files": [
+        "app/src/main/kotlin/com/tarteelcompanion/importflow/ImportViewModel.kt:131-143",
+        "app/src/main/kotlin/com/tarteelcompanion/importflow/ImportScreen.kt:86-101",
+        "app/src/main/kotlin/com/tarteelcompanion/importflow/ConfirmTagScreen.kt:67-73"
+      ],
+      "why_it_matters": "autoDetect unconditionally replaces item.extraction (ImportViewModel.kt:141) even when the previous state was Extracted and the re-anchor returns NeedsManual. ImportScreen maps NeedsManual to (page=null, detections=emptyList) and ConfirmTagScreen's remember keys change: pageInput resets to '1' (initialPage null, line 67) and marks reset to empty. A correct anchor at 163 with valid detections is destroyed by one fat-fingered Auto-detect at 164. Worse cascade: a hasty 'Save (no mistakes)' now records the import under page 1 with zero detections, sets lastConfirmedPage=1 (poisoning the next batch hint), and the SHA-256 dedup permanently blocks re-importing that screenshot - ImportDao has no delete, so there is no undo.",
+      "evidence": [
+        "Trigger: Confirming with Extracted(163, 3 detections). User types 164 (typo), taps Auto-detect.",
+        "Step: anchorAt(..., 164) -> alignToPage fails -> NeedsManual -> state = Confirming(item.copy(extraction=NeedsManual)).",
+        "Step: recomposition with initialPage=null, initialDetections=[] -> pageInput='1', marks cleared. The 3 valid detections are unrecoverable except by re-running auto-detect at 163 from memory.",
+        "Cascade: Save here -> recordImport(hash, page=1, []) -> lastConfirmedPage=1 -> next screenshot hinted at page 1; the saved hash blocks any future re-import of this image."
+      ],
+      "suggested_direction": "Keep the previous Extracted result when a re-anchor fails (surface a transient error instead), and never reset pageInput to '1' - retain the last user-entered value."
+    },
+    {
+      "id": "ADV-6",
+      "title": "Double-tap on the Study grade button double-counts the grade and silently skips the next card",
+      "severity": "P2",
+      "confidence": 75,
+      "pre_existing": false,
+      "autofix_class": "manual",
+      "owner": "downstream-resolver",
+      "files": [
+        "app/src/main/kotlin/com/tarteelcompanion/study/StudyViewModel.kt:132-146",
+        "app/src/main/kotlin/com/tarteelcompanion/quiz/QuizViewModel.kt:99-108"
+      ],
+      "why_it_matters": "StudyViewModel.grade reads cards.getOrNull(index) synchronously at tap time, then suspends across Room calls before index++ and re-publish. Two taps within that window (Room I/O is a real suspension point; double-taps are routine) both capture the SAME card: each spot receives studyGrade twice. The second studyGrade logs a STUDY row whose pre-snapshot is the POST-first-grade state; the next-day quiz replays from latestStudy's snapshot, so the first grade is permanently baked in - two scheduling-effective reviews in one cycle, breaking invariant 1. index++ also runs twice, so the following card is never shown or graded. QuizViewModel.grade has the same shape: duplicate QUIZ logs plus a duplicated entry in results, inflating the summary.",
+      "evidence": [
+        "Trigger: card A revealed, user double-taps Good. Tap1: card=cards[0], launch, suspends at policy.studyGrade (Room). Tap2: index still 0 -> card=cards[0], launch.",
+        "Step: coroutine1 grades A's spots (STUDY log 1, pre=pre-study), index=1, publishes B. Coroutine2 grades A's spots AGAIN (STUDY log 2, pre=post-grade-1), index=2, publishes C.",
+        "Failure 1: latestStudy for A's spots is log 2 -> tomorrow's quizGrade replays from the post-grade-1 state -> study grade double-counts.",
+        "Failure 2: card B is skipped without grading; the graded counter is inflated by A's spot count twice."
+      ],
+      "suggested_direction": "Guard grade()/next() with an in-flight flag or state-phase check before launching; advance index in the same serialized path."
+    },
+    {
+      "id": "ADV-7",
+      "title": "Stale autoDetect coroutine can overwrite the next screenshot's Confirming state - batch item silently lost",
+      "severity": "P2",
+      "confidence": 50,
+      "pre_existing": false,
+      "autofix_class": "manual",
+      "owner": "downstream-resolver",
+      "files": [
+        "app/src/main/kotlin/com/tarteelcompanion/importflow/ImportViewModel.kt:131-143,146-170"
+      ],
+      "why_it_matters": "autoDetect captures the CURRENT Confirming state, does segmentation + DP alignment on IO (sub-second to seconds; the first call also awaits the Quran repo and lazily builds 604 pages of tokens), then writes _state.value = current.copy(...) with no staleness check. If the user taps Save (always enabled with a valid page) or Discard while auto-detect runs, the batch advances - processNext pops the NEXT uri and publishes Confirming(item B). The stale autoDetect completion then rolls state back to Confirming(item A). B was already dequeued; when the confused user saves A again, recordImport returns DuplicateImage, processNext pops nothing, and BatchDone(saved=1, duplicates=1) shows - item B was never confirmed, saved, or counted as discarded. A screenshot's mistakes vanish with no signal.",
+      "evidence": [
+        "Trigger: batch [A, B]; Confirming A; user taps Auto-detect (slow first run), then Save before it completes.",
+        "Step: save() -> recordImport(A) -> processNext -> pops B -> Processing -> load(B) -> Confirming(B).",
+        "Step: autoDetect coroutine completes -> _state.value = Confirming(A', index=1) - replaces B's screen; no check that state still holds item A.",
+        "Failure: user saves re-shown A -> DuplicateImage -> processNext -> queue empty -> BatchDone(saved=1, discarded=0, duplicates=1). B lost silently."
+      ],
+      "suggested_direction": "Before publishing the autoDetect result, verify _state.value is still Confirming the same item (compare hash); also disable Save while a re-anchor is in flight."
+    },
+    {
+      "id": "ADV-8",
+      "title": "recordImport is not transactional; the content-hash dedup then blocks the only repair path after a partial write",
+      "severity": "P3",
+      "confidence": 50,
+      "pre_existing": false,
+      "autofix_class": "manual",
+      "owner": "downstream-resolver",
+      "files": [
+        "app/src/main/kotlin/com/tarteelcompanion/data/MistakeRepository.kt:42-124"
+      ],
+      "why_it_matters": "recordImport inserts the import row (with its unique contentHash) first, then loops per-detection spot/occurrence writes as separate Room calls. Process death mid-loop leaves the import row committed with only a prefix of detections recorded. The natural repair - re-sharing the same screenshot - is permanently rejected at line 50 (byHash -> DuplicateImage) BEFORE any recording, so the missing detections can never be attached to that image, and the batch UI even reports it as a duplicate. Recovery-induced failure: the dedup designed to prevent double-recording converts a transient crash into permanent, invisible data loss.",
+      "evidence": [
+        "Trigger: import with 6 detections; process killed (low-memory kill during batch bitmap handling is plausible) after detection 2's occurrence insert.",
+        "State: imports row present (hash committed), 2 of 6 spots/occurrences present.",
+        "Repair attempt: re-import same screenshot -> ImportResult.DuplicateImage at MistakeRepository.kt:50 -> duplicates++ in UI -> remaining 4 mistakes permanently unrecorded unless re-tagged from memory on a different image."
+      ],
+      "suggested_direction": "Wrap recordImport in db.withTransaction so the hash row and all detections commit atomically."
+    },
+    {
+      "id": "ADV-9",
+      "title": "Colored cluster slotted onto an ayah-marker token falls back to the FIRST word of the run - anchor can land several words from the mistake",
+      "severity": "P3",
+      "confidence": 50,
+      "pre_existing": false,
+      "autofix_class": "advisory",
+      "owner": "human",
+      "files": [
+        "app/src/main/kotlin/com/tarteelcompanion/extraction/AnchoringPipeline.kt:70-82"
+      ],
+      "why_it_matters": "In the proportional slotting loop, when frac lands within a marker token's span, chosen = token.wordIndex ?: tokens.firstNotNullOfOrNull { it.wordIndex } picks the FIRST word of the run. Tokens are in reading order, so in RTL rendering the first word is the RIGHTMOST, while the marker sits at the LEFT end of its run. A colored mistake glyph on the last word of an ayah whose cluster bbox bleeds into the marker region (dotted underlines and colored diacritics widen clusters; satellites are deliberately kept) can anchor to the first word of the run, several positions from the actual mistake. The float-overflow fallback (tokens.lastOrNull { !it.isMarker }) makes the opposite, correct choice - the two fallbacks disagree.",
+      "evidence": [
+        "Trigger: run renders [w5, w6, w7, marker] (units 1.2, 0.8, 1.0, 2.4); red mistake on w7 with cluster center displaced left into the marker's proportional span.",
+        "Step: frac <= cumulative breaks on the marker token -> chosen = null ?: firstNotNullOfOrNull -> w5.",
+        "Failure: Detection(ref=w5) recorded two words right of the real mistake; distinctBy{ref} may additionally merge it with a genuine w5 detection."
+      ],
+      "suggested_direction": "When the slot lands on a marker, choose the nearest preceding non-marker token, consistent with the lastOrNull fallback."
+    }
+  ],
+  "verified_non_issues": [
+    "encodeWordRef collisions: surah*1e6 + ayah*1e3 + word; max ayah 286 < 1000, max words per ayah ~129 (2:282) < 1000 - no field overflow; decode is exact inverse. Safe.",
+    "CardBuilder cross-surah merge: guarded by last.surah == ayah.surah && ayah.ayah == last.ayah+1 (CardBuilder.kt:58); AyahRef orders by (surah, ayah); ayah-1 boundary yields leadIn=null via precedingAyahInSurah. Safe.",
+    "MutashabihatDiffer LCS: worst case ~201x201 int DP for the longest ayat - trivial. Safe.",
+    "save() with page=null after auto-detect: ConfirmTagScreen enables Save only when page != null, so pageNumber is always non-null from that surface. Safe (lastConfirmedPage updates even on DuplicateImage - harmless).",
+    "Review-ahead grinding: reviewState with elapsed=0 gives r=1.0 -> zero stability growth; same-day repetition abuse is self-limiting. Safe.",
+    "Zero-line/blank screenshots: runs.size < 20 gate plus the pxPerUnit scale-sanity check route to NeedsManual. Safe.",
+    "autoDetect during Processing: state cast to Confirming returns early. Safe."
+  ],
+  "residual_risks": [
+    "Adjacent-page false-accept rate under ACCEPT_COST=0.15 is unquantified: corpus tests assert only that the TRUE page anchors and page 1 rejects; no measurement of how often page N+-1 also passes for a page-N screenshot (directly determines ADV-1's hit rate).",
+    "ColorClassifier thresholds are calibrated on a two-theme corpus; a future theme degrades to missed detections (fails safe to manual tagging), not fabrication."
+  ],
+  "testing_gaps": [
+    "No test that anchorAt(screenshot-of-page-N, page=N+-1) gates to NeedsManual (adjacent-page rejection).",
+    "No SchedulingPolicy test for the same-day occurrence-collapse + open-cycle quiz interaction (ADV-3); the existing open-cycle test only covers a first occurrence of the day.",
+    "No isQuizPending test with non-UTC millis/epochDay pairs; all tests imply a UTC user via at(day,hour)=day*86400000+hours.",
+    "No double-invocation tests for StudyViewModel.grade / QuizViewModel.grade / next.",
+    "No test for ImportViewModel state transitions when autoDetect resolves after save()/discard()."
+  ]
+}

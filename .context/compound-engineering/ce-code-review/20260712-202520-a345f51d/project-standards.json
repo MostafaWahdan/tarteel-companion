@@ -1,0 +1,74 @@
+{
+  "reviewer": "project-standards",
+  "run_id": "20260712-202520-a345f51d",
+  "scope": "D:\tarteel-companion, branch feat/v1-core-loop, base 869818a, full implementation (70 files)",
+  "standards_sources": [
+    "README.md",
+    ".gitignore",
+    "docs/plans/2026-07-12-001-feat-tarteel-companion-v1-plan.md",
+    "docs/solutions/extraction-spike-findings.md"
+  ],
+  "checks_performed": [
+    {
+      "check": "no dataset/screenshot/key files committed",
+      "method": "git ls-files piped through grep for assets/quran, samples/, .keystore, .jks, secrets.properties",
+      "result": "PASS - zero matches; app/src/main/assets/ has no tracked files at all"
+    },
+    {
+      "check": "API key never reaches logs",
+      "method": "grep for Log dot calls across app/src/main/kotlin, plus manual read of ApiKeyStore.kt, LlmClient.kt, GenerationWorker.kt, SettingsScreen.kt, MnemonicRepository.kt",
+      "result": "PASS - zero Log calls anywhere in mnemonics/; the only Log.w calls in the whole app are in importflow/ImportViewModel.kt (uri/decode failures), unrelated to the key; the key is never interpolated into any status or reason string, only messages like API key rejected (HTTP code)"
+    },
+    {
+      "check": "verse text rendering only via QuranRepository (R4), evaluate ConfirmTagScreen basmala constant",
+      "method": "grep for quoted Arabic-script string literals across app/src/main/kotlin, cross-referenced against QuranAssets.kt parser",
+      "result": "ONE VIOLATION - ConfirmTagScreen.kt line 137 hardcodes the basmala glyph string literal instead of sourcing it from QuranRepository or the bundled dataset. QuranModels and QuranAssets show the raw per-line dataset already carries a text field, used for SURAH_HEADER via headerText, that is nulled out for BASMALA lines, meaning the wiring to source it from the bundled asset was available but not used. All other Arabic-script literals found (MutashabihatDiffer normalization set, PageMatcher narrow-glyph set, SettingsScreen test-call prompt, MnemonicSection status string) are non-verse UI or algorithm strings, not verse text, so not violations."
+    },
+    {
+      "check": "extraction package has zero android.graphics imports",
+      "method": "grep android.graphics across app/src/main/kotlin extraction package and app/src/test/kotlin extraction package",
+      "result": "MAIN SOURCE PASSES - zero android.graphics imports in app/src/main/kotlin/com/tarteelcompanion/extraction (only doc-comment mentions of the invariant in PixelGrid.kt and ExtractionPipeline.kt). TEST SOURCE VIOLATION - SpikeHarnessTest.kt, AnchoringPipelineTest.kt, and SegmentationDiagnosticTest.kt all import android.graphics.BitmapFactory and run under RunWith(RobolectricTestRunner), contradicting the plan explicit statement that JVM tests decode samples/ via ImageIO so the golden suites run in plain JVM without Robolectric. No commit message documents this as a sanctioned deviation, unlike MistakeRepositoryTest.kt, which carries an explicit inline comment marking its own Robolectric use as a plan U5 adaptation."
+    },
+    {
+      "check": "README claims match reality (gradlew test skips gracefully when samples/ absent)",
+      "method": "read SpikeHarnessTest.kt, AnchoringPipelineTest.kt, SegmentationDiagnosticTest.kt for assumeTrue guards",
+      "result": "PASS - all three extraction golden and diagnostic tests use org.junit.Assume.assumeTrue to skip when samples/ or the bundled dataset is absent, matching the README claim verbatim"
+    }
+  ],
+  "findings": [
+    {
+      "id": "PS-1",
+      "title": "Basmala rendered from a hardcoded string literal instead of the bundled Quran dataset",
+      "rule_quote": "docs/plans/2026-07-12-001-feat-tarteel-companion-v1-plan.md, System-Wide Impact, Unchanged invariants: bundled Quran data is read-only and versioned by asset; verse text shown anywhere always originates from it (R4) - no code path may display OCR- or LLM-derived Quran text. Also QuranModels.kt line 29 doc comment: One word on a mushaf page, verse text always verbatim from the bundled dataset.",
+      "violation_location": "app/src/main/kotlin/com/tarteelcompanion/importflow/ConfirmTagScreen.kt:136-140",
+      "violation_detail": "LineType.BASMALA renders a literal Kotlin string constant for the basmala glyphs instead of a value sourced from QuranRepository or QuranAssets. QuranAssets.kt line 41 shows the underlying per-line raw dataset carries a text field (line.text) that is wired through to headerText only for LineType.SURAH_HEADER; it is discarded for LineType.BASMALA even though the field exists on the same raw record, meaning the bundled-source path was available and not used.",
+      "severity": "P2",
+      "confidence": 65,
+      "autofix_class": "gated_auto",
+      "owner": "downstream-resolver",
+      "pre_existing": false,
+      "protected_path": false
+    },
+    {
+      "id": "PS-2",
+      "title": "Extraction golden tests use Robolectric and android.graphics.BitmapFactory instead of the plan ImageIO plain-JVM decode design",
+      "rule_quote": "docs/plans/2026-07-12-001-feat-tarteel-companion-v1-plan.md, Key Technical Decisions, Pure Kotlin pixel processing bullet: a thin device-side adapter converts Bitmap to pixels, and JVM tests decode samples/ via ImageIO. This is what lets the golden suites run in plain JVM without Robolectric.",
+      "violation_location": "app/src/test/kotlin/com/tarteelcompanion/extraction/SpikeHarnessTest.kt:3,8,18-19,67; app/src/test/kotlin/com/tarteelcompanion/extraction/AnchoringPipelineTest.kt:3,13,26-27,70; app/src/test/kotlin/com/tarteelcompanion/extraction/SegmentationDiagnosticTest.kt:3,7,12-13,39",
+      "violation_detail": "All three extraction test files import android.graphics.BitmapFactory, run under RunWith(RobolectricTestRunner) with GraphicsMode NATIVE, and call BitmapFactory.decodeFile to decode samples/ images - the exact opposite of the plan stated ImageIO-based, Robolectric-free JVM decode approach. Unlike data/MistakeRepositoryTest.kt, which documents its own Robolectric usage inline as an explicit plan U5 adaptation, no commit message or code comment marks this as a sanctioned deviation for the extraction package.",
+      "severity": "P2",
+      "confidence": 75,
+      "autofix_class": "manual",
+      "owner": "human",
+      "pre_existing": false,
+      "protected_path": false
+    }
+  ],
+  "residual_risks": [
+    "Because app/src/main/assets/quran/ is (correctly) gitignored and not present in this checkout, the reviewer could not directly inspect the bundled dataset JSON schema to confirm whether the basmala line raw text field is actually populated with the Uthmani basmala glyphs by the zonetecde/mushaf-layout source; the finding is based on the parser code structural symmetry with SURAH_HEADER, not a verified dataset value.",
+    "No CI workflow exists yet (per plan: no CI initially), so the Robolectric-vs-ImageIO test-harness deviation and the extraction golden-suite results are not continuously verified against the real sample corpus."
+  ],
+  "testing_gaps": [
+    "No test asserts that LineType.BASMALA renders dataset-sourced text rather than a hardcoded literal - a future dataset or font update could silently diverge from the on-screen basmala with nothing catching it.",
+    "No test currently guards that the extraction package test sources stay dependency-light per the plan original no-Robolectric decode design, so a future contributor could reasonably assume Robolectric plus BitmapFactory is the sanctioned pattern for new extraction tests."
+  ]
+}

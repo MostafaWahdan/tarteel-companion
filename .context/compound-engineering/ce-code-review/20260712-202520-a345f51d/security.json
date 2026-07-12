@@ -1,0 +1,74 @@
+{
+  "reviewer": "security",
+  "run_id": "20260712-202520-a345f51d",
+  "scope": "branch feat/v1-core-loop vs 869818a (entire 70-file implementation)",
+  "threat_model": "Personal single-user Android app, no server/accounts. Assets: Gemini API key (Keystore-wrapped AES/GCM in DataStore), personal mistake data in Room (unencrypted, accepted), screenshots/thumbnails. Attack surfaces: exported MainActivity share intent, Gemini REST client, WorkManager.",
+  "verified_ok": [
+    {"area": "API key transport", "detail": "LlmClient.kt sends key in x-goog-api-key header, never in URL; baseUrl hardcoded https; targetSdk 35 default blocks cleartext; no usesCleartextTraffic or networkSecurityConfig override in manifest."},
+    {"area": "Key logging and errors", "detail": "No Log call touches the key; only 4 Log.w in ImportViewModel about URIs/dimensions. LlmResult reason strings carry HTTP codes and IOException messages only. SettingsScreen test-connection passes the key per-call; status strings never include it."},
+    {"area": "Key at rest", "detail": "ApiKeyStore: AES/GCM key generated inside AndroidKeyStore (non-exportable), IV:ciphertext base64 in DataStore; PasswordVisualTransformation on input; clear() removes ciphertext."},
+    {"area": "Backup", "detail": "allowBackup=false in manifest; on API 31+ this also opts out of D2D transfer, so absent dataExtractionRules is acceptable."},
+    {"area": "SQL", "detail": "All Room queries parameterized; no rawQuery or string concatenation anywhere."},
+    {"area": "LLM response handling", "detail": "GeminiClient.parse treats responses as untrusted: kotlinx-serialization with ignoreUnknownKeys, catch-all to Failed, text rendered only via Compose Text; no WebView/fromHtml in the repo."},
+    {"area": "Decode math", "detail": "inSampleSize = max(1, maxDim/2000) with maxDim capped at 8000: decoded bitmap at most ~4000px transiently, 2000px typical; no overflow."},
+    {"area": "Secrets in repo", "detail": "No AIza-pattern keys; tests use a fake test-key only; .gitignore excludes keystores, secrets.properties, personal screenshot samples; gradle wrapper URL is https."},
+    {"area": "Component exposure", "detail": "Only exported component is MainActivity (launcher + SEND filters); no deep links; SEND extras parsed type-safely on API 33+."}
+  ],
+  "findings": [
+    {
+      "id": "SEC-1",
+      "title": "Share-intent handler buffers the entire untrusted stream into memory before any size check (OOM DoS)",
+      "file": "app/src/main/kotlin/com/tarteelcompanion/importflow/ImportViewModel.kt",
+      "line": 188,
+      "severity": "P3",
+      "confidence_anchor": 75,
+      "pre_existing": false,
+      "autofix_class": "safe_auto",
+      "owner": "review-fixer",
+      "detail": "loadUnsafe() reads the full stream with readBytes() before the MAX_DIMENSION_PX bounds check at line 196. Both the URI and the image/* MIME type come from the sending app and are never validated against content. A malicious or buggy app (or an accidental user share) can hand a multi-GB stream; readBytes() buffers it entirely into a ByteArray and the process dies with OutOfMemoryError before the dimension rejection runs. The dimension cap defeats decode bombs but not raw-stream bombs. Impact is crash-only on a single-user device (per-screenshot saves survive), hence P3, but this is the one reachable attack through the app's only exported surface.",
+      "attack_path": "malicious app -> ACTION_SEND image/* with huge content:// or file:// stream -> MainActivity.handleShareIntent -> pendingShares -> ImportViewModel.loadUnsafe readBytes() -> OOM crash",
+      "fix": "Stream-copy into a bounded buffer and reject anything over a generous ceiling (e.g. 50 MB, far above any real screenshot), discarding with a Log.w like the other rejection branches; or decode bounds from a first openInputStream and only then read bytes."
+    },
+    {
+      "id": "SEC-2",
+      "title": "Keystore decrypt failure silently swallowed: stale ciphertext persists and the generation worker retries forever behind a misleading No-key-saved UI",
+      "file": "app/src/main/kotlin/com/tarteelcompanion/mnemonics/ApiKeyStore.kt",
+      "line": 52,
+      "severity": "P3",
+      "confidence_anchor": 75,
+      "pre_existing": false,
+      "autofix_class": "advisory",
+      "owner": "human",
+      "detail": "load() catches every exception and returns null. Two consequences: (1) the undecryptable ciphertext blob stays in DataStore indefinitely since clear() never runs on this path, leaving a dead secret blob in app storage; (2) MnemonicRepository.generatePending() returns false when load() is null, so GenerationWorker returns Result.retry and WorkManager retries indefinitely with no user-visible failure, while SettingsScreen reports No key saved. Silent key loss on keystore reset is an acceptable availability trade per the plan, but the stale-blob plus infinite-retry combination should be a deliberate decision, not an accident of the catch-all.",
+      "fix": "On decrypt failure in load(), remove the pref entry (self-heal) so downstream state is consistent, and optionally surface a stored-key-unrecoverable message in Settings."
+    },
+    {
+      "id": "SEC-3",
+      "title": "Personal screenshot thumbnails written to filesDir/thumbs but never read and never deleted (unbounded retention of recitation data)",
+      "file": "app/src/main/kotlin/com/tarteelcompanion/importflow/ImportViewModel.kt",
+      "line": 222,
+      "severity": "P3",
+      "confidence_anchor": 100,
+      "pre_existing": false,
+      "autofix_class": "advisory",
+      "owner": "human",
+      "detail": "saveThumbnail() persists a JPEG of every confirmed screenshot under filesDir/thumbs/<sha256>.jpg and stores the path in ImportScreenshotEntity.thumbnailPath. Grep confirms thumbnailPath is written but never read by any screen, and no code deletes thumbnail files or ImportScreenshotEntity rows: MistakeRepository.delete() removes spot, occurrences, and review log but leaves the import row and thumbnail on disk forever. Files are app-private with allowBackup=false, so this is retention hygiene rather than an exploitable leak, but data the user believes permanently removed survives with no purge path. Hash-based filenames (SHA-256 of original bytes) make collision or overwrite a non-issue.",
+      "fix": "Either wire thumbnails into the archive UI with a deletion path, or stop writing them until the consuming feature exists; add thumbnail cleanup when the referencing import data is deleted."
+    }
+  ],
+  "suppressed": [
+    {"candidate": "Arbitrary-readable-URI ingestion: file:// shares make the app read any file it can access", "anchor": 25, "reason": "Content is only hashed and bitmap-decoded; non-images fail decode and are discarded; nothing is exfiltrated, uploaded, or rendered unless it is a valid image the sender could already read. No confidentiality impact in this architecture."},
+    {"candidate": "IOException message surfaced in Settings status / Retryable reason", "anchor": 25, "reason": "May contain hostname at most, never key material; shown only to the device owner."},
+    {"candidate": "Prompt content sent to Gemini", "anchor": 0, "reason": "Verified: MnemonicRepository.buildPrompt uses only canonical dataset verse text and references; no personal-data path into the prompt."}
+  ],
+  "residual_risks": [
+    "scripts/fetch-datasets.sh downloads dataset JSON from two third-party GitHub repos over HTTPS without commit pinning or checksum verification; a compromised upstream could ship altered Quran text or malformed JSON into the app bundle (worst case in-app: wrong text or a parse crash; no code-execution path via kotlinx JSON).",
+    "Room DB (mistake history) is unencrypted at rest; explicitly accepted in the plan for the single-user threat model.",
+    "Release build has isMinifyEnabled=false; no security impact for a BYO-key app (nothing secret ships in the APK)."
+  ],
+  "testing_gaps": [
+    "No test covers share-intent ingestion with hostile inputs (oversized stream, non-image bytes with image/* MIME, zero-byte stream); the SEC-1 byte cap should land with a test.",
+    "No test exercises ApiKeyStore failure modes (corrupt blob, missing keystore alias); the interface is faked in JVM tests so the catch-all in load() never executes in CI.",
+    "No test asserts thumbnail cleanup; one would have caught the SEC-3 dead write."
+  ]
+}

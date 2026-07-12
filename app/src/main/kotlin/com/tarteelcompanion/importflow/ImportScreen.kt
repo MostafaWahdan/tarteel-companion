@@ -27,6 +27,7 @@ import com.tarteelcompanion.TarteelApp
 import com.tarteelcompanion.extraction.AnchoringPipeline
 import com.tarteelcompanion.extraction.ExtractionResult
 import com.tarteelcompanion.quran.QuranRepository
+import com.tarteelcompanion.ui.Centered
 
 /** F1 entry: multi-select picker (share-sheet intents land here too via TarteelApp). */
 @Composable
@@ -124,7 +125,3 @@ fun ImportScreen(
     }
 }
 
-@Composable
-private fun Centered(content: @Composable () -> Unit) {
-    Box(Modifier.fillMaxSize().padding(24.dp), contentAlignment = Alignment.Center) { content() }
-}

@@ -1,0 +1,11 @@
+{
+  "run_id": "20260712-202520-a345f51d",
+  "branch": "feat/v1-core-loop",
+  "head_sha": "2f9f769",
+  "verdict": "Ready with fixes",
+  "completed_at": "2026-07-12T20:45:00Z",
+  "reviewers": 10,
+  "findings_actionable": 18,
+  "safe_auto_applied": 3,
+  "residual_downstream": 15
+}

@@ -1,0 +1,109 @@
+{
+  "reviewer": "reliability",
+  "run_id": "20260712-202520-a345f51d",
+  "findings": [
+    {
+      "id": "REL-1",
+      "title": "Quran Deferred permanently fails after one asset-parse error; no retry path",
+      "file": "app/src/main/kotlin/com/tarteelcompanion/TarteelApp.kt",
+      "lines": "37-39",
+      "related_files": [
+        "app/src/main/kotlin/com/tarteelcompanion/ui/Navigation.kt:63-64",
+        "app/src/main/kotlin/com/tarteelcompanion/study/StudyViewModel.kt:74",
+        "app/src/main/kotlin/com/tarteelcompanion/quiz/QuizViewModel.kt:81",
+        "app/src/main/kotlin/com/tarteelcompanion/importflow/ImportScreen.kt:38"
+      ],
+      "description": "quran is a Deferred cached via by lazy, wrapping QuranRepository.load(). If load() throws (corrupted/malformed bundled asset JSON, IO error), the Deferred completes exceptionally and is never replaced. Every subsequent await() anywhere in the app rethrows the same cached exception forever with no retry, backoff, or reset. Navigation.kt's produceState block awaits it with no try/catch, so the first failure crashes composition at app launch, and the crash recurs on every relaunch.",
+      "severity": "P1",
+      "confidence": 85,
+      "pre_existing": false,
+      "autofix_class": "manual",
+      "owner": "human",
+      "rationale": "Requires replacing the cached lazy Deferred with a retryable loader or exposing failure as UI state -- architectural change, not a mechanical patch."
+    },
+    {
+      "id": "REL-2",
+      "title": "recordImport is not transactional: partial writes commit a dedup hash with no matching spots/occurrences and no retry path",
+      "file": "app/src/main/kotlin/com/tarteelcompanion/data/MistakeRepository.kt",
+      "lines": "42-124",
+      "description": "recordImport() inserts the ImportScreenshotEntity and its content hash first, then loops over detections doing per-item spot/occurrence inserts and updates -- none wrapped in a Room transaction (no withTransaction call exists anywhere in the codebase). If the process dies or an exception is thrown mid-loop after the import row commits but before all detections are processed, the import is left partially applied, and because the hash is already recorded, byHash() will report DuplicateImage on any later retry of the same screenshot. The user has no way to complete or retry that import short of manual DB intervention.",
+      "severity": "P1",
+      "confidence": 80,
+      "pre_existing": false,
+      "autofix_class": "manual",
+      "owner": "human",
+      "rationale": "Correct fix requires wrapping the method body in a Room transaction and reconsidering commit ordering (hash insert vs detection writes) -- a behavior change needing review, not a safe mechanical patch."
+    }
+    ,
+    {
+      "id": "REL-3",
+      "title": "generatePending has no per-item error isolation; one unexpected exception aborts the whole batch without triggering a retry",
+      "file": "app/src/main/kotlin/com/tarteelcompanion/mnemonics/MnemonicRepository.kt",
+      "lines": "98-118",
+      "related_files": [
+        "app/src/main/kotlin/com/tarteelcompanion/mnemonics/GenerationWorker.kt:22-26",
+        "app/src/main/kotlin/com/tarteelcompanion/mnemonics/LlmClient.kt:47-68"
+      ],
+      "description": "The loop over pending items calls client.generate() with no try/catch. GeminiClient.generate() only catches IOException around the HTTP call; it does not guard Request.Builder construction, which can throw IllegalArgumentException (e.g. OkHttp header validation rejecting a key with an embedded control character). Any such exception propagates out of generatePending() and doWork() uncaught; WorkManager records that as Result.failure(), not Result.retry(), so the unique work slot frees without automatic rescheduling. Every mnemonic after the one that threw stays PENDING and stalls until an unrelated UI action re-triggers GenerationWorker.enqueue().",
+      "severity": "P2",
+      "confidence": 75,
+      "pre_existing": false,
+      "autofix_class": "gated_auto",
+      "owner": "review-fixer",
+      "rationale": "Localized fix: wrap the per-item client.generate() call in try/catch and map unexpected exceptions to a retryable or failed result, continuing the loop. Small, testable, low blast radius."
+    },
+    {
+      "id": "REL-4",
+      "title": "ImportViewModel.save() has no error handling around recordImport(); an uncaught exception crashes the app mid-batch",
+      "file": "app/src/main/kotlin/com/tarteelcompanion/importflow/ImportViewModel.kt",
+      "lines": "146-170",
+      "description": "save() launches on viewModelScope and calls mistakes.recordImport() with no try/catch. viewModelScope has no installed CoroutineExceptionHandler, so an exception from recordImport (e.g. SQLiteException from a full disk) is uncaught and terminates the app process. This is worse than the documented mid-batch-abandon design: the whole batch is lost via a hard crash instead of surfacing ImportUiState.Error, which exists but is never reached from this path.",
+      "severity": "P2",
+      "confidence": 70,
+      "pre_existing": false,
+      "autofix_class": "gated_auto",
+      "owner": "review-fixer",
+      "rationale": "Local try/catch routing failures to ImportUiState.Error instead of letting the coroutine crash; low risk, testable in isolation."
+    }
+    ,
+    {
+      "id": "REL-5",
+      "title": "SchedulingPolicy read-modify-write on SpotEntity has no transaction or locking; concurrent grade + import can lose an update",
+      "file": "app/src/main/kotlin/com/tarteelcompanion/srs/SchedulingPolicy.kt",
+      "lines": "72-145",
+      "description": "studyGrade, quizGrade, applyOccurrenceLapse, and persist() each read a SpotEntity then later write it back with no transaction wrapping the pair and no optimistic-concurrency check. Two concurrent callers touching the same spotId (e.g. a queued share-sheet import calling applyOccurrenceLapse while a study/quiz session grades the same spot) can produce a lost update where one writer's change silently overwrites the other's based on a stale read. The concurrency window is narrow for a single-user app but the code offers no protection if it occurs.",
+      "severity": "P3",
+      "confidence": 50,
+      "pre_existing": false,
+      "autofix_class": "advisory",
+      "owner": "downstream-resolver",
+      "rationale": "Depends on real-world concurrent usage not fully verifiable from the diff alone; kept advisory per anchor-50 guidance rather than treated as a confirmed defect."
+    },
+    {
+      "id": "REL-6",
+      "title": "Blocking network call inside GenerationWorker.doWork runs on Dispatchers.Default instead of being offloaded to Dispatchers.IO",
+      "file": "app/src/main/kotlin/com/tarteelcompanion/mnemonics/GenerationWorker.kt",
+      "lines": "22-26",
+      "related_files": ["app/src/main/kotlin/com/tarteelcompanion/mnemonics/LlmClient.kt:64-66"],
+      "description": "CoroutineWorker.doWork() runs on Dispatchers.Default by default. generatePending() calls the synchronous, blocking OkHttp execute() directly in that context with no withContext(Dispatchers.IO) hand-off. Each blocking call can occupy a Default-pool thread for the duration of OkHttp's default per-operation timeouts, once per pending item, tying up shared CPU-pool threads other app coroutines rely on.",
+      "severity": "P3",
+      "confidence": 50,
+      "pre_existing": false,
+      "autofix_class": "advisory",
+      "owner": "downstream-resolver",
+      "rationale": "Low impact for a personal app with a small pending queue; framework thread-pool sizing may absorb this in practice."
+    }
+  ],
+  "residual_risks": [
+    "WorkManager's ExistingWorkPolicy.KEEP plus Result.retry() relies on WorkManager's own persistence/rescheduling guarantees across process death; not independently verified beyond framework documentation.",
+    "GeminiClient's OkHttpClient() uses library-default timeouts, not explicit ones in this codebase; a slow trickling response could exceed intended bounds since no overall call timeout is set.",
+    "ImportViewModel's in-memory queue and decoded Bitmap for the current item are lost on ViewModel/process death mid-batch; the code's own comments describe this as an accepted tradeoff (I4), so it is not raised as a finding.",
+    "ApiKeyStore.load() intentionally swallows all decrypt/keystore exceptions and returns null; correct for corrupt-blob/keystore-reset cases but also masks any other unexpected decrypt failure as 'no key saved' with no diagnostic signal."
+  ],
+  "testing_gaps": [
+    "No test exercises MnemonicRepository.generatePending with an exception thrown from the LLM client (rather than a returned LlmResult) to verify batch continuation or isolation.",
+    "No test exercises MistakeRepository.recordImport with a simulated mid-loop failure to verify whether the import row and prior detections remain consistent or retryable afterward.",
+    "No test covers QuranRepository.load failing (corrupted or missing asset) and what downstream ViewModels/composables do when the shared Deferred completes exceptionally.",
+    "No concurrency test exercises SchedulingPolicy under simulated concurrent calls (applyOccurrenceLapse racing studyGrade/quizGrade for the same spotId) to check for lost updates."
+  ]
+}

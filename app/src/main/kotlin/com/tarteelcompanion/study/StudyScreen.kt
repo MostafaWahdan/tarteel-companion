@@ -43,6 +43,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.tarteelcompanion.TarteelApp
 import com.tarteelcompanion.data.model.ReviewGrade
 import com.tarteelcompanion.quran.QuranRepository
+import com.tarteelcompanion.ui.Centered
 import com.tarteelcompanion.ui.PassageText
 
 @Composable
@@ -208,7 +209,3 @@ fun GradeBar(onGrade: (ReviewGrade) -> Unit) {
     }
 }
 
-@Composable
-private fun Centered(content: @Composable () -> Unit) {
-    Box(Modifier.fillMaxSize().padding(24.dp), contentAlignment = Alignment.Center) { content() }
-}
