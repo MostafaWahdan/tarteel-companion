@@ -8,6 +8,10 @@ import com.tarteelcompanion.data.MistakeRepository
 import com.tarteelcompanion.data.entity.encodeWordRef
 import com.tarteelcompanion.data.model.MistakeType
 import com.tarteelcompanion.data.model.ReviewGrade
+import com.tarteelcompanion.mnemonics.GenerationWorker
+import com.tarteelcompanion.mnemonics.MnemonicEntity
+import com.tarteelcompanion.mnemonics.MnemonicRepository
+import com.tarteelcompanion.mnemonics.MnemonicStatus
 import com.tarteelcompanion.quran.QuranRepository
 import com.tarteelcompanion.quran.WordRef
 import com.tarteelcompanion.srs.SchedulingPolicy
@@ -30,6 +34,8 @@ sealed interface StudyUiState {
         val revealed: Boolean,
         /** True when this session is a review-ahead (nothing was due) — M4. */
         val reviewAhead: Boolean,
+        /** Mnemonics for the card's mutashabihat groups, in group order (R12). */
+        val mnemonics: List<MnemonicEntity> = emptyList(),
     ) : StudyUiState
 
     data class SessionDone(val graded: Int) : StudyUiState
@@ -43,6 +49,8 @@ class StudyViewModel(
     private val quranDeferred: Deferred<QuranRepository>,
     private val mistakes: MistakeRepository,
     private val policy: SchedulingPolicy,
+    private val mnemonicRepo: MnemonicRepository? = null,
+    private val enqueueGeneration: () -> Unit = {},
 ) : ViewModel() {
 
     private val _state = MutableStateFlow<StudyUiState>(StudyUiState.Loading)
@@ -86,7 +94,39 @@ class StudyViewModel(
         }
     }
 
-    fun reveal() = publish(revealed = true)
+    fun reveal() {
+        val card = cards.getOrNull(index) ?: return
+        viewModelScope.launch {
+            val mnemonics = fetchMnemonics(card)
+            if (mnemonics.any { it.status == MnemonicStatus.PENDING }) enqueueGeneration()
+            publish(revealed = true, mnemonics = mnemonics)
+        }
+    }
+
+    fun saveMnemonic(entity: MnemonicEntity, text: String) {
+        val card = cards.getOrNull(index) ?: return
+        viewModelScope.launch {
+            mnemonicRepo?.saveUserText(entity, text)
+            publish(revealed = true, mnemonics = fetchMnemonics(card))
+        }
+    }
+
+    fun retryMnemonic(entity: MnemonicEntity) {
+        val card = cards.getOrNull(index) ?: return
+        viewModelScope.launch {
+            mnemonicRepo?.retryFailed(entity)
+            enqueueGeneration()
+            publish(revealed = true, mnemonics = fetchMnemonics(card))
+        }
+    }
+
+    private suspend fun fetchMnemonics(card: StudyCard): List<MnemonicEntity> {
+        val repo = mnemonicRepo ?: return emptyList()
+        return card.mutashabihat.map { group ->
+            val target = card.ayat.firstOrNull { it in group.members } ?: card.primaryAyah
+            repo.mnemonicFor(group, target)
+        }
+    }
 
     /** One grade per card, fanned out to every contained spot (R19). */
     fun grade(grade: ReviewGrade) {
@@ -124,16 +164,19 @@ class StudyViewModel(
         }
     }
 
-    private fun publish(revealed: Boolean) {
+    private fun publish(revealed: Boolean, mnemonics: List<MnemonicEntity> = emptyList()) {
         val card = cards.getOrNull(index) ?: return
-        _state.value = StudyUiState.Reviewing(card, index + 1, cards.size, revealed, reviewAhead)
+        _state.value = StudyUiState.Reviewing(card, index + 1, cards.size, revealed, reviewAhead, mnemonics)
     }
 
     companion object {
         fun factory(app: TarteelApp) = object : ViewModelProvider.Factory {
             @Suppress("UNCHECKED_CAST")
             override fun <T : ViewModel> create(modelClass: Class<T>): T =
-                StudyViewModel(app.quran, app.mistakes, app.policy) as T
+                StudyViewModel(
+                    app.quran, app.mistakes, app.policy, app.mnemonicRepo,
+                    enqueueGeneration = { GenerationWorker.enqueue(app) },
+                ) as T
         }
     }
 }

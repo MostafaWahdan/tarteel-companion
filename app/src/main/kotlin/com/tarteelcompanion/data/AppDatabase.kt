@@ -18,8 +18,16 @@ import com.tarteelcompanion.data.model.MistakeType
 import com.tarteelcompanion.data.model.ReviewGrade
 import com.tarteelcompanion.data.model.ReviewKind
 import com.tarteelcompanion.data.model.SpotState
+import com.tarteelcompanion.mnemonics.MnemonicDao
+import com.tarteelcompanion.mnemonics.MnemonicEntity
+import com.tarteelcompanion.mnemonics.MnemonicSource
+import com.tarteelcompanion.mnemonics.MnemonicStatus
 
 class Converters {
+    @TypeConverter fun mnemonicStatusToString(v: MnemonicStatus): String = v.name
+    @TypeConverter fun stringToMnemonicStatus(v: String): MnemonicStatus = MnemonicStatus.valueOf(v)
+    @TypeConverter fun mnemonicSourceToString(v: MnemonicSource): String = v.name
+    @TypeConverter fun stringToMnemonicSource(v: String): MnemonicSource = MnemonicSource.valueOf(v)
     @TypeConverter fun spotStateToString(v: SpotState): String = v.name
     @TypeConverter fun stringToSpotState(v: String): SpotState = SpotState.valueOf(v)
     @TypeConverter fun mistakeTypeToString(v: MistakeType): String = v.name
@@ -36,6 +44,7 @@ class Converters {
         OccurrenceEntity::class,
         ImportScreenshotEntity::class,
         ReviewLogEntity::class,
+        MnemonicEntity::class,
     ],
     version = 1,
     exportSchema = true,
@@ -46,6 +55,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun occurrenceDao(): OccurrenceDao
     abstract fun importDao(): ImportDao
     abstract fun reviewLogDao(): ReviewLogDao
+    abstract fun mnemonicDao(): MnemonicDao
 
     companion object {
         @Volatile private var instance: AppDatabase? = null

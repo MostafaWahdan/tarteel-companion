@@ -165,6 +165,11 @@ private fun CardView(s: StudyUiState.Reviewing, quran: QuranRepository?, viewMod
                     if (quran != null && card.mutashabihat.isNotEmpty()) {
                         HorizontalDivider(Modifier.padding(vertical = 12.dp))
                         ComparisonSection(card = card, quran = quran)
+                        MnemonicSection(
+                            mnemonics = s.mnemonics,
+                            onSave = viewModel::saveMnemonic,
+                            onRetry = viewModel::retryMnemonic,
+                        )
                     }
                 }
             }

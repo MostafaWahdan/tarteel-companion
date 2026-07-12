@@ -61,6 +61,9 @@ dependencies {
     implementation(libs.androidx.navigation.compose)
 
     implementation(libs.kotlinx.serialization.json)
+    implementation(libs.androidx.datastore.preferences)
+    implementation(libs.androidx.work.runtime)
+    implementation(libs.okhttp)
     implementation(libs.androidx.room.runtime)
     implementation(libs.androidx.room.ktx)
     ksp(libs.androidx.room.compiler)
@@ -69,6 +72,7 @@ dependencies {
     testImplementation(libs.kotlinx.coroutines.test)
     testImplementation(libs.robolectric)
     testImplementation(libs.androidx.test.core)
+    testImplementation(libs.okhttp.mockwebserver)
     androidTestImplementation(libs.androidx.test.junit)
     androidTestImplementation(libs.androidx.espresso.core)
     debugImplementation(libs.androidx.compose.ui.tooling)
