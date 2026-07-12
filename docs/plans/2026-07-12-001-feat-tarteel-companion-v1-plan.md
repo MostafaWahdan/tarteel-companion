@@ -1,7 +1,7 @@
 ---
 title: "feat: Tarteel Companion v1 — import, study, and quiz loop"
 type: feat
-status: active
+status: completed
 date: 2026-07-12
 origin: docs/brainstorms/2026-07-12-tarteel-companion-requirements.md
 ---
@@ -92,7 +92,7 @@ None — `docs/solutions/` does not exist yet in this repo.
 ## Key Technical Decisions
 
 - **No OCR; geometric extraction against bundled layout data**: page identification + projection-profile line/word segmentation, validated against QUL layout counts (exact word counts per line are known ahead of time). Deterministic, testable as pure functions, no native dependencies. Rationale: origin R2 demands deterministic on-device extraction; OCR options are all weak on Uthmani script.
-- **Pure Kotlin pixel processing, no OpenCV/ML Kit/Tesseract in v1**: screenshots are synthetic flat-color UI renders; nearest-swatch color classification over raw pixel arrays plus connected-component grouping is a few hundred lines and keeps the APK free of native libs. The extraction package takes a plain pixel-array input (`IntArray` + dimensions, or a small `PixelGrid` value type) and contains zero `android.graphics` references — a thin device-side adapter converts `Bitmap` → pixels, and JVM tests decode `samples/` via `ImageIO`. This is what lets the golden suites run in plain JVM without Robolectric.
+- **Pure Kotlin pixel processing, no OpenCV/ML Kit/Tesseract in v1**: screenshots are synthetic flat-color UI renders; nearest-swatch color classification over raw pixel arrays plus connected-component grouping is a few hundred lines and keeps the APK free of native libs. The extraction package takes a plain pixel-array input (`IntArray` + dimensions, or a small `PixelGrid` value type) and contains zero `android.graphics` references — a thin device-side adapter converts `Bitmap` → pixels, and JVM tests decode `samples/` via `ImageIO`. This is what lets the golden suites run in plain JVM without Robolectric. *(Execution deviation, recorded post-completion: `javax.imageio` is not on the Android unit-test compile classpath (android.jar), so the golden suites decode via Robolectric NATIVE-mode `BitmapFactory` instead — the extraction package itself remains free of `android.graphics` as planned.)*
 - **Color classification on full RGB against calibrated per-theme swatches, not hue thresholds**: brown is dark desaturated yellow — hue-only rules will confuse R3's yellow/brown distinction. Swatches are sampled from real screenshots in the U3 spike and stored as constants with a distance threshold.
 - **Stack: Kotlin + Jetpack Compose + Room + WorkManager + DataStore; single module**: default modern Android stack; no CV library constraint pushes toward anything else. Single-module keeps a personal project simple; packages provide the layering.
 - **Bundled data: QUL QPC-Hafs word-by-word SQLite + QUL KFGQPC V2 (1421H, 604-page/15-line Madani) layout + QUL mutashabihat JSON**: one coherent source, run by Tarteel themselves, maximizing layout-match odds with the Tarteel app. Which QUL layout ID actually matches Tarteel's rendering is verified empirically in U3.

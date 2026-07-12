@@ -209,56 +209,6 @@ class PageMatcher(private val quran: QuranRepository) {
         return widths
     }
 
-    /** Test-only: line-stage cost against one specific page (null = infeasible). */
-    fun debugAlignCost(runs: List<Segmentation.WordCluster>, page: Int): Double? =
-        alignLines(lineWidthsOf(runs), pageTokens[page - 1])?.first
-
-    /** Test-only: (bestPage, bestCost, secondCost) over the line-stage search. */
-    fun debugSearch(runs: List<Segmentation.WordCluster>): Triple<Int, Double, Double> {
-        val lineWidths = lineWidthsOf(runs)
-        var bestPage = -1
-        var bestCost = Double.MAX_VALUE
-        var secondCost = Double.MAX_VALUE
-        for (page in 1..604) {
-            val cost = alignLines(lineWidths, pageTokens[page - 1])?.first ?: continue
-            if (cost < bestCost) {
-                secondCost = bestCost; bestCost = cost; bestPage = page
-            } else if (cost < secondCost) {
-                secondCost = cost
-            }
-        }
-        return Triple(bestPage, bestCost, secondCost)
-    }
-
-    /**
-     * Test-only: combined cost (line stage + within-line run stage) for one page.
-     * This is the discrimination experiment: line counts pin the token partition and
-     * the run stage scores each line's internal width-sequence fit.
-     */
-    fun debugCombinedCost(runs: List<Segmentation.WordCluster>, page: Int): Double? {
-        val tokens = pageTokens[page - 1]
-        val (lineCost, counts) = alignLines(lineWidthsOf(runs), tokens) ?: return null
-        var runCost = 0.0
-        var lines = 0
-        var tokenStart = 0
-        for ((lineIdx, count) in counts.withIndex()) {
-            val lineRuns = runs.filter { it.line == lineIdx }
-            val lineTokens = tokens.subList(tokenStart, tokenStart + count)
-            tokenStart += count
-            if (lineRuns.isEmpty()) continue
-            val aligned = align(lineRuns, lineTokens) ?: return null
-            runCost += aligned.cost
-            lines++
-        }
-        return lineCost + runCost / maxOf(1, lines)
-    }
-
-    /** Test-only: ranks all pages by combined cost, returns top pages with costs. */
-    fun debugCombinedSearch(runs: List<Segmentation.WordCluster>, topN: Int = 5): List<Pair<Int, Double>> =
-        (1..604).mapNotNull { page ->
-            debugCombinedCost(runs, page)?.let { page to it }
-        }.sortedBy { it.second }.take(topN)
-
     /**
      * Aligns the runs against ONE known page (empirical finding, recorded in the spike
      * doc: the width model cannot identify a page blind — its job is anchoring within

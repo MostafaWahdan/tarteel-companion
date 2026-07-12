@@ -13,7 +13,6 @@ import com.tarteelcompanion.srs.SchedulingPolicy
 import com.tarteelcompanion.study.CardBuilder
 import com.tarteelcompanion.study.CardSpot
 import com.tarteelcompanion.study.StudyCard
-import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
@@ -54,12 +53,15 @@ sealed interface QuizUiState {
  * Mid-quiz abandonment keeps committed grades; ungraded spots stay pending (M5).
  */
 class QuizViewModel(
-    private val quranDeferred: Deferred<QuranRepository>,
+    private val quranSource: suspend () -> QuranRepository,
     private val mistakes: MistakeRepository,
     private val policy: SchedulingPolicy,
     /** Session size cap (plan: pending quizzes merge, oldest first, capped). */
     private val sessionCap: Int = 30,
 ) : ViewModel() {
+
+    /** Guards grade() against double taps (review finding, corroborated). */
+    private var actionInFlight = false
 
     private val _state = MutableStateFlow<QuizUiState>(QuizUiState.Loading)
     val state: StateFlow<QuizUiState> = _state
@@ -78,7 +80,7 @@ class QuizViewModel(
     fun loadQueue() {
         _state.value = QuizUiState.Loading
         viewModelScope.launch {
-            val quran = quranDeferred.await()
+            val quran = quranSource()
             val pending = policy.quizQueue(today(), now()).take(sessionCap)
             if (pending.isEmpty()) {
                 _state.value = QuizUiState.Empty
@@ -98,12 +100,20 @@ class QuizViewModel(
 
     fun grade(grade: ReviewGrade) {
         val card = cards.getOrNull(index) ?: return
+        val current = _state.value
+        if (actionInFlight) return
+        if (current is QuizUiState.Question && current.phase == QuizUiState.Question.Phase.GRADED) return
+        actionInFlight = true
         viewModelScope.launch {
-            for (spot in card.spots) {
-                policy.quizGrade(encodeWordRef(spot.ref), grade, today(), now())
+            try {
+                for (spot in card.spots) {
+                    policy.quizGrade(encodeWordRef(spot.ref), grade, today(), now())
+                }
+                results += QuizResult(card, grade)
+                publish(QuizUiState.Question.Phase.GRADED, grade)
+            } finally {
+                actionInFlight = false
             }
-            results += QuizResult(card, grade)
-            publish(QuizUiState.Question.Phase.GRADED, grade)
         }
     }
 
@@ -125,7 +135,7 @@ class QuizViewModel(
         fun factory(app: TarteelApp) = object : ViewModelProvider.Factory {
             @Suppress("UNCHECKED_CAST")
             override fun <T : ViewModel> create(modelClass: Class<T>): T =
-                QuizViewModel(app.quran, app.mistakes, app.policy) as T
+                QuizViewModel({ app.quran().await() }, app.mistakes, app.policy) as T
         }
     }
 }

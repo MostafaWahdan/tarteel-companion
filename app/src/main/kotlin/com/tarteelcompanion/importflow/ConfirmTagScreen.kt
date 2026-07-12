@@ -63,6 +63,7 @@ fun ConfirmTagScreen(
     onSave: (page: Int?, detections: List<Detection>) -> Unit,
     onDiscard: () -> Unit,
     onAutoDetect: ((Int) -> Unit)? = null,
+    detectMessage: String? = null,
 ) {
     var pageInput by remember(initialPage) { mutableStateOf((initialPage ?: 1).toString()) }
     var showReference by remember { mutableStateOf(true) }
@@ -74,6 +75,14 @@ fun ConfirmTagScreen(
 
     val pageNumber = pageInput.toIntOrNull()?.coerceIn(1, 604)
     val page = pageNumber?.let { quran.page(it) }
+
+    // Only refs on the DISPLAYED page may save: correcting the page number by typing
+    // must not carry invisible stale marks from the previous page into the store
+    // (review finding, corroborated adversarial+correctness).
+    val pageRefs = remember(page) {
+        page?.lines?.flatMap { line -> line.words.map { it.ref } }?.toSet() ?: emptySet()
+    }
+    val visibleMarks = marks.filterKeys { it in pageRefs }
 
     Column(
         Modifier
@@ -111,6 +120,11 @@ fun ConfirmTagScreen(
                 contentDescription = "Original Tarteel screenshot",
                 modifier = Modifier.fillMaxWidth(),
             )
+        }
+
+        detectMessage?.let {
+            Spacer(Modifier.height(4.dp))
+            Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
         }
 
         Spacer(Modifier.height(8.dp))
@@ -170,10 +184,12 @@ fun ConfirmTagScreen(
             Button(
                 enabled = page != null,
                 onClick = {
-                    onSave(pageNumber, marks.map { (ref, type) -> Detection(ref, type) })
+                    onSave(pageNumber, visibleMarks.map { (ref, type) -> Detection(ref, type) })
                 },
                 modifier = Modifier.weight(1f),
-            ) { Text(if (marks.isEmpty()) "Save (no mistakes)" else "Save ${marks.size} mistake(s)") }
+            ) {
+                Text(if (visibleMarks.isEmpty()) "Save (no mistakes)" else "Save ${visibleMarks.size} mistake(s)")
+            }
             OutlinedButton(onClick = onDiscard, modifier = Modifier.weight(1f)) {
                 Text("Discard — not a page")
             }

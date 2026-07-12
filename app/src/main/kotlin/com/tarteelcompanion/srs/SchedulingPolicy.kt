@@ -52,11 +52,14 @@ class SchedulingPolicy(
      */
     suspend fun isQuizPending(spotId: Long, todayEpochDay: Long, nowEpochMillis: Long): Boolean {
         val study = db.reviewLogDao().latestStudy(spotId) ?: return false
-        val quizzedAfter = db.reviewLogDao().forSpot(spotId).any {
-            it.kind == ReviewKind.QUIZ && it.reviewedAtEpochMillis > study.reviewedAtEpochMillis
-        }
-        if (quizzedAfter) return false
-        val studyDay = study.reviewedAtEpochMillis / 86_400_000L
+        // Indexed MAX() lookup instead of scanning the spot's whole history — this
+        // runs per spot on every queue build and histories grow unbounded (perf-2).
+        val latestQuiz = db.reviewLogDao().latestQuizMillis(spotId)
+        if (latestQuiz != null && latestQuiz > study.reviewedAtEpochMillis) return false
+        // Local-day comparison: a UTC floor (millis / 86_400_000) reopens the midnight
+        // loophole east of UTC and delays every evening study's quiz west of UTC.
+        val studyDay = java.time.Instant.ofEpochMilli(study.reviewedAtEpochMillis)
+            .atZone(java.time.ZoneId.systemDefault()).toLocalDate().toEpochDay()
         val gapOk = nowEpochMillis - study.reviewedAtEpochMillis >= minQuizGapHours * HOUR_MILLIS
         return todayEpochDay > studyDay && gapOk
     }
@@ -119,7 +122,12 @@ class SchedulingPolicy(
                 )
             }
             ReviewGrade.GOOD, ReviewGrade.EASY -> {
-                val matured = base.scheduledIntervalDays >= GRADUATION_INTERVAL_DAYS
+                // Graduation requires a mature REVIEW-phase base: a real-world lapse
+                // leaves the replay base in RELEARNING, and its scheduledIntervalDays
+                // would otherwise read elapsed-time-at-failure — a just-failed spot
+                // must never graduate (review finding, corroborated adversarial+correctness).
+                val matured = base.phase == Fsrs.Phase.REVIEW &&
+                    base.scheduledIntervalDays >= GRADUATION_INTERVAL_DAYS
                 persist(spot, next, graduate = matured, todayEpochDay = todayEpochDay)
             }
         }

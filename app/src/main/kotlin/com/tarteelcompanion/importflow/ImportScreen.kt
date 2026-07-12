@@ -24,7 +24,6 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.tarteelcompanion.TarteelApp
-import com.tarteelcompanion.extraction.AnchoringPipeline
 import com.tarteelcompanion.extraction.ExtractionResult
 import com.tarteelcompanion.quran.QuranRepository
 import com.tarteelcompanion.ui.Centered
@@ -36,7 +35,7 @@ fun ImportScreen(
     viewModel: ImportViewModel = viewModel(
         factory = run {
             val app = LocalContext.current.applicationContext as TarteelApp
-            ImportViewModel.factory(app) { AnchoringPipeline(app.quran.await()) }
+            ImportViewModel.factory(app) { app.extractionPipeline() }
         },
     ),
 ) {
@@ -99,6 +98,7 @@ fun ImportScreen(
                     onSave = { p, d -> viewModel.save(s.item, p, d) },
                     onDiscard = viewModel::discard,
                     onAutoDetect = viewModel::autoDetect,
+                    detectMessage = s.detectMessage,
                 )
             }
         }

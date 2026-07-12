@@ -61,7 +61,7 @@ fun TarteelCompanionApp() {
         val currentDestination = backStackEntry?.destination
         val app = LocalContext.current.applicationContext as TarteelApp
         val quran by produceState<QuranRepository?>(initialValue = null) {
-            value = app.quran.await()
+            value = app.quran().await()
         }
         // Shared screenshots land on the Import tab immediately — consumption must not
         // straddle a tab switch (the Import ViewModel dies with its back-stack entry).

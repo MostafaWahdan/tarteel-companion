@@ -36,8 +36,14 @@ class SchedulingPolicyTest {
 
     private val day0 = 20_000L
 
+    private lateinit var previousZone: java.util.TimeZone
+
     @Before
     fun setUp() {
+        // Fabricated millis in these tests are UTC-aligned; eligibility now converts
+        // through the system zone, so pin it for determinism (restored in tearDown).
+        previousZone = java.util.TimeZone.getDefault()
+        java.util.TimeZone.setDefault(java.util.TimeZone.getTimeZone("UTC"))
         val context = ApplicationProvider.getApplicationContext<Context>()
         db = Room.inMemoryDatabaseBuilder(context, AppDatabase::class.java)
             .allowMainThreadQueries().build()
@@ -46,7 +52,10 @@ class SchedulingPolicyTest {
     }
 
     @After
-    fun tearDown() = db.close()
+    fun tearDown() {
+        db.close()
+        java.util.TimeZone.setDefault(previousZone)
+    }
 
     private suspend fun seedSpot(day: Long = day0) {
         repo.recordImport("hash-$day", 42, listOf(Detection(ref, MistakeType.WRONG_WORD)), day, at(day))
@@ -115,6 +124,53 @@ class SchedulingPolicyTest {
     }
 
     @Test
+    fun `a spot that lapsed before its study cannot graduate from that cycle quiz`() = runTest {
+        // Review finding P1 (import → study → quiz order): the lapse leaves the replay
+        // base in RELEARNING with lastReview untouched, so scheduledIntervalDays reads
+        // elapsed-time-at-failure — graduation must require a REVIEW-phase base.
+        seedSpot()
+        db.spotDao().update(
+            spot().copy(
+                stability = 30.0, difficulty = 5.0, phase = Fsrs.Phase.REVIEW,
+                dueEpochDay = day0 + 30, lastReviewEpochDay = day0, pendingLapse = false,
+            ),
+        )
+        // The mistake happens live in Tarteel and is imported BEFORE that day's study.
+        repo.recordImport("morning-fail", 42, listOf(Detection(ref, MistakeType.WRONG_WORD)), day0 + 30, at(day0 + 30, 8))
+        policy.applyOccurrenceLapse(spotId, day0 + 30)
+        policy.studyGrade(spotId, ReviewGrade.GOOD, day0 + 30, at(day0 + 30, 12))
+        policy.quizGrade(spotId, ReviewGrade.GOOD, day0 + 31, at(day0 + 31, 12))
+
+        assertEquals("just-failed spot must not graduate", SpotState.ACTIVE, spot().state)
+    }
+
+    @Test
+    fun `evening re-occurrence collapsing into a morning one still re-bases the quiz`() = runTest {
+        // Review finding P1 (corroborated): the same-day collapse used to keep the
+        // MORNING import's id, so the supersession check saw a pre-study timestamp
+        // and the quiz erased the applied evening lapse.
+        seedSpot()
+        db.spotDao().update(
+            spot().copy(
+                stability = 30.0, difficulty = 5.0, phase = Fsrs.Phase.REVIEW,
+                dueEpochDay = day0 + 30, lastReviewEpochDay = day0, pendingLapse = false,
+            ),
+        )
+        repo.recordImport("morning", 42, listOf(Detection(ref, MistakeType.WRONG_WORD)), day0 + 30, at(day0 + 30, 8))
+        policy.applyOccurrenceLapse(spotId, day0 + 30)
+        policy.studyGrade(spotId, ReviewGrade.GOOD, day0 + 30, at(day0 + 30, 12))
+        // Evening: the same word fails again in Tarteel — collapses into the morning occurrence.
+        repo.recordImport("evening", 42, listOf(Detection(ref, MistakeType.WRONG_WORD)), day0 + 30, at(day0 + 30, 20))
+        policy.applyOccurrenceLapse(spotId, day0 + 30)
+
+        policy.quizGrade(spotId, ReviewGrade.GOOD, day0 + 31, at(day0 + 31, 12))
+
+        val s = spot()
+        assertEquals(SpotState.ACTIVE, s.state)
+        assertTrue("quiz must build on the lapsed baseline, got stability ${s.stability}", s.stability < 30.0)
+    }
+
+    @Test
     fun `occurrence during open cycle re-bases the pending quiz`() = runTest {
         seedSpot()
         db.spotDao().update(
@@ -171,6 +227,24 @@ class SchedulingPolicyTest {
         assertFalse(policy.isQuizPending(spotId, day0 + 1, at(day0 + 1, 0) + 10 * 60_000L))
         // 10:30 next day: both conditions met.
         assertTrue(policy.isQuizPending(spotId, day0 + 1, at(day0 + 1, 10) + 30 * 60_000L))
+    }
+
+    @Test
+    fun `east of UTC a post-midnight study is not quizzable the same local day`() = runTest {
+        // Review finding (corroborated): the UTC-floor day comparison reopened the
+        // midnight loophole east of UTC. In UTC+3, a study at 00:30 local must not be
+        // quizzable at 10:31 local the SAME day even though the 10h gap has passed.
+        java.util.TimeZone.setDefault(java.util.TimeZone.getTimeZone("GMT+3"))
+        seedSpot()
+        val localDay = day0 + 1
+        // 00:30 local on localDay = 21:30 UTC on day0.
+        val studyMillis = localDay * 86_400_000L - 3 * 3_600_000L + 30 * 60_000L
+        policy.studyGrade(spotId, ReviewGrade.GOOD, localDay, studyMillis)
+
+        // 10:31 local same day: gap (10h1m) passed, but the local day has not.
+        assertFalse(policy.isQuizPending(spotId, localDay, studyMillis + 10 * 3_600_000L + 60_000L))
+        // Next local day it becomes pending.
+        assertTrue(policy.isQuizPending(spotId, localDay + 1, studyMillis + 26 * 3_600_000L))
     }
 
     @Test

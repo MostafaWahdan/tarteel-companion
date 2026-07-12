@@ -33,8 +33,31 @@ class TarteelApp : Application() {
         MnemonicRepository(database.mnemonicDao(), apiKeyStore, GeminiClient())
     }
 
-    /** The Quran dataset parses once, off the main thread, at first request. */
-    val quran: Deferred<QuranRepository> by lazy {
+    private val quranLock = Any()
+    private var quranDeferred: Deferred<QuranRepository>? = null
+
+    @Volatile
+    private var pipelineCache: com.tarteelcompanion.extraction.AnchoringPipeline? = null
+
+    /**
+     * One pipeline instance per process: PageMatcher tokenizes all 604 pages lazily,
+     * and rebuilding it per screenshot re-paid that cost on every image in a batch
+     * (review finding perf-1).
+     */
+    suspend fun extractionPipeline(): com.tarteelcompanion.extraction.ExtractionPipeline =
+        pipelineCache ?: com.tarteelcompanion.extraction.AnchoringPipeline(quran().await())
+            .also { pipelineCache = it }
+
+    /**
+     * The Quran dataset parses once, off the main thread, at first request. A failed
+     * parse is NOT cached: retrying returns a fresh attempt instead of rethrowing the
+     * poisoned Deferred forever (review finding REL-1).
+     */
+    fun quran(): Deferred<QuranRepository> = synchronized(quranLock) {
+        val current = quranDeferred
+        val failed = current != null && current.isCompleted && current.getCompletionExceptionOrNull() != null
+        if (current != null && !failed) return current
         appScope.async { QuranRepository.load(AndroidQuranAssetReader(this@TarteelApp)) }
+            .also { quranDeferred = it }
     }
 }

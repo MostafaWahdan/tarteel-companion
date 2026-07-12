@@ -86,6 +86,11 @@ interface ReviewLogDao {
     )
     suspend fun latestStudy(spotId: Long): ReviewLogEntity?
 
+    @Query(
+        "SELECT MAX(reviewedAtEpochMillis) FROM review_log WHERE spotId = :spotId AND kind = 'QUIZ'",
+    )
+    suspend fun latestQuizMillis(spotId: Long): Long?
+
     @Insert
     suspend fun insert(log: ReviewLogEntity): Long
 

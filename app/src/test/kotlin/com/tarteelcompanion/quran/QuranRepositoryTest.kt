@@ -17,38 +17,10 @@ import java.io.InputStream
  */
 class QuranRepositoryTest {
 
-    private class FileReader(private val root: File) : QuranAssetReader {
-        override fun open(path: String): InputStream = File(root, path).inputStream()
-        override fun exists(path: String): Boolean = File(root, path).exists()
-    }
-
-    companion object {
-        private var repository: QuranRepository? = null
-
-        @JvmStatic
-        @BeforeClass
-        fun loadOnce() {
-            val root = findAssetRoot() ?: return
-            repository = QuranRepository.load(FileReader(root))
-        }
-
-        /** Walks up from the working dir so the test works from repo root or app/. */
-        private fun findAssetRoot(): File? {
-            var dir: File? = File(System.getProperty("user.dir"))
-            while (dir != null) {
-                val candidate = File(dir, "app/src/main/assets/quran")
-                if (File(candidate, "pages/page-001.json").exists()) return candidate
-                val local = File(dir, "src/main/assets/quran")
-                if (File(local, "pages/page-001.json").exists()) return local
-                dir = dir.parentFile
-            }
-            return null
-        }
-    }
-
     private fun repo(): QuranRepository {
-        assumeTrue("Quran dataset not fetched — run scripts/fetch-datasets.sh", repository != null)
-        return repository!!
+        val repo = com.tarteelcompanion.TestData.quran
+        assumeTrue("Quran dataset not fetched — run scripts/fetch-datasets.sh", repo != null)
+        return repo!!
     }
 
     @Test

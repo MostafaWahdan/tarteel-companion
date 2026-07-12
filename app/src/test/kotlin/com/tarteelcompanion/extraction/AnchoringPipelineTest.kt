@@ -2,18 +2,15 @@ package com.tarteelcompanion.extraction
 
 import android.graphics.BitmapFactory
 import com.tarteelcompanion.data.model.MistakeType
-import com.tarteelcompanion.quran.QuranAssetReader
 import com.tarteelcompanion.quran.QuranRepository
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Assume.assumeTrue
-import org.junit.BeforeClass
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.GraphicsMode
 import java.io.File
-import java.io.InputStream
 
 /**
  * Golden tests over the real screenshot corpus (skip when samples/ or the dataset are
@@ -27,32 +24,7 @@ import java.io.InputStream
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
 class AnchoringPipelineTest {
 
-    companion object {
-        private var quran: QuranRepository? = null
-        private var samples: File? = null
-
-        @JvmStatic
-        @BeforeClass
-        fun locate() {
-            var dir: File? = File(System.getProperty("user.dir"))
-            while (dir != null) {
-                val assets = File(dir, "app/src/main/assets/quran")
-                    .takeIf { File(it, "pages/page-001.json").exists() }
-                    ?: File(dir, "src/main/assets/quran").takeIf { File(it, "pages/page-001.json").exists() }
-                val samplesDir = File(dir, "samples").takeIf { it.isDirectory }
-                    ?: File(dir.parentFile ?: dir, "samples").takeIf { it.isDirectory }
-                if (assets != null) {
-                    quran = QuranRepository.load(object : QuranAssetReader {
-                        override fun open(path: String): InputStream = File(assets, path).inputStream()
-                        override fun exists(path: String): Boolean = File(assets, path).exists()
-                    })
-                    samples = samplesDir
-                    return
-                }
-                dir = dir.parentFile
-            }
-        }
-    }
+    private val quran: QuranRepository? get() = com.tarteelcompanion.TestData.quran
 
     private fun pipeline(): AnchoringPipeline {
         assumeTrue("dataset not fetched", quran != null)
@@ -60,10 +32,9 @@ class AnchoringPipelineTest {
     }
 
     private fun sampleFiles(): List<File> {
-        assumeTrue("samples/ not present", samples != null)
-        return samples!!.listFiles()!!
-            .filter { it.extension.lowercase() in setOf("jpg", "jpeg", "png") }
-            .sortedBy { it.name }
+        val files = com.tarteelcompanion.TestData.sampleFiles()
+        assumeTrue("samples/ not present", files.isNotEmpty())
+        return files
     }
 
     private fun pixelsOf(file: File): Triple<IntArray, Int, Int> {
@@ -108,7 +79,8 @@ class AnchoringPipelineTest {
             }
         }
 
-        File(samples!!.parentFile, "app/build/anchoring-report.txt").writeText(report.toString())
+        File(com.tarteelcompanion.TestData.samplesDir!!.parentFile, "app/build/anchoring-report.txt")
+            .writeText(report.toString())
 
         // Plan verification bar: ≥95% of the corpus anchors given the correct page.
         val rate = anchored.toDouble() / files.size

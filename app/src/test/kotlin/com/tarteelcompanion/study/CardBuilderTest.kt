@@ -17,28 +17,7 @@ import java.io.InputStream
 /** Runs against the real fetched dataset; skips when assets are absent (like QuranRepositoryTest). */
 class CardBuilderTest {
 
-    companion object {
-        private var quran: QuranRepository? = null
-
-        @JvmStatic
-        @BeforeClass
-        fun loadOnce() {
-            var dir: File? = File(System.getProperty("user.dir"))
-            while (dir != null) {
-                val candidate = File(dir, "app/src/main/assets/quran")
-                    .takeIf { File(it, "pages/page-001.json").exists() }
-                    ?: File(dir, "src/main/assets/quran").takeIf { File(it, "pages/page-001.json").exists() }
-                if (candidate != null) {
-                    quran = QuranRepository.load(object : QuranAssetReader {
-                        override fun open(path: String): InputStream = File(candidate, path).inputStream()
-                        override fun exists(path: String): Boolean = File(candidate, path).exists()
-                    })
-                    return
-                }
-                dir = dir.parentFile
-            }
-        }
-    }
+    private val quran: QuranRepository? get() = com.tarteelcompanion.TestData.quran
 
     private fun builder(): CardBuilder {
         assumeTrue("dataset not fetched", quran != null)

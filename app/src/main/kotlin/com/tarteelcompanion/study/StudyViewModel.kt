@@ -15,7 +15,6 @@ import com.tarteelcompanion.mnemonics.MnemonicStatus
 import com.tarteelcompanion.quran.QuranRepository
 import com.tarteelcompanion.quran.WordRef
 import com.tarteelcompanion.srs.SchedulingPolicy
-import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
@@ -46,12 +45,15 @@ sealed interface StudyUiState {
  * through the single scheduling authority (U7).
  */
 class StudyViewModel(
-    private val quranDeferred: Deferred<QuranRepository>,
+    private val quranSource: suspend () -> QuranRepository,
     private val mistakes: MistakeRepository,
     private val policy: SchedulingPolicy,
     private val mnemonicRepo: MnemonicRepository? = null,
     private val enqueueGeneration: () -> Unit = {},
 ) : ViewModel() {
+
+    /** Guards grade/suspend/delete against double taps (review finding, corroborated). */
+    private var actionInFlight = false
 
     private val _state = MutableStateFlow<StudyUiState>(StudyUiState.Loading)
     val state: StateFlow<StudyUiState> = _state
@@ -71,7 +73,7 @@ class StudyViewModel(
     fun loadQueue(ahead: Boolean = false) {
         _state.value = StudyUiState.Loading
         viewModelScope.launch {
-            val quran = quranDeferred.await()
+            val quran = quranSource()
             val due = policy.studyQueue(today(), now())
             val pool = if (due.isEmpty() && ahead) {
                 policy.quizExcludedActiveSpots(today(), now())
@@ -131,28 +133,50 @@ class StudyViewModel(
     /** One grade per card, fanned out to every contained spot (R19). */
     fun grade(grade: ReviewGrade) {
         val card = cards.getOrNull(index) ?: return
+        if (actionInFlight) return
+        actionInFlight = true
         viewModelScope.launch {
-            for (spot in card.spots) {
-                policy.studyGrade(encodeWordRef(spot.ref), grade, today(), now())
-            }
-            graded += card.spots.size
-            index++
-            if (index >= cards.size) {
-                _state.value = StudyUiState.SessionDone(graded)
-            } else {
-                publish(revealed = false)
+            try {
+                for (spot in card.spots) {
+                    policy.studyGrade(encodeWordRef(spot.ref), grade, today(), now())
+                }
+                graded += card.spots.size
+                index++
+                if (index >= cards.size) {
+                    _state.value = StudyUiState.SessionDone(graded)
+                } else {
+                    publish(revealed = false)
+                }
+            } finally {
+                actionInFlight = false
             }
         }
     }
 
-    fun suspendSpot(ref: WordRef) = viewModelScope.launch {
-        mistakes.suspend(ref)
-        skipCurrentCard()
+    fun suspendSpot(ref: WordRef) {
+        if (actionInFlight) return
+        actionInFlight = true
+        viewModelScope.launch {
+            try {
+                mistakes.suspend(ref)
+                skipCurrentCard()
+            } finally {
+                actionInFlight = false
+            }
+        }
     }
 
-    fun deleteSpot(ref: WordRef) = viewModelScope.launch {
-        mistakes.delete(ref)
-        skipCurrentCard()
+    fun deleteSpot(ref: WordRef) {
+        if (actionInFlight) return
+        actionInFlight = true
+        viewModelScope.launch {
+            try {
+                mistakes.delete(ref)
+                skipCurrentCard()
+            } finally {
+                actionInFlight = false
+            }
+        }
     }
 
     private fun skipCurrentCard() {
@@ -174,7 +198,7 @@ class StudyViewModel(
             @Suppress("UNCHECKED_CAST")
             override fun <T : ViewModel> create(modelClass: Class<T>): T =
                 StudyViewModel(
-                    app.quran, app.mistakes, app.policy, app.mnemonicRepo,
+                    { app.quran().await() }, app.mistakes, app.policy, app.mnemonicRepo,
                     enqueueGeneration = { GenerationWorker.enqueue(app) },
                 ) as T
         }

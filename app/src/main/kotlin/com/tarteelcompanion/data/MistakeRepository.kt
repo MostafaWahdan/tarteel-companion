@@ -1,5 +1,6 @@
 package com.tarteelcompanion.data
 
+import androidx.room.withTransaction
 import com.tarteelcompanion.data.entity.ImportScreenshotEntity
 import com.tarteelcompanion.data.entity.OccurrenceEntity
 import com.tarteelcompanion.data.entity.SpotEntity
@@ -46,6 +47,20 @@ class MistakeRepository(private val db: AppDatabase) {
         epochDay: Long,
         nowEpochMillis: Long,
         thumbnailPath: String? = null,
+    ): ImportResult = db.withTransaction {
+        // Transactional: the import row (dedup hash) must never commit without its
+        // spots/occurrences — a partial write would permanently block re-importing
+        // this screenshot through the hash check (review finding, corroborated).
+        recordImportInTransaction(contentHash, pageNumber, detections, epochDay, nowEpochMillis, thumbnailPath)
+    }
+
+    private suspend fun recordImportInTransaction(
+        contentHash: String,
+        pageNumber: Int?,
+        detections: List<Detection>,
+        epochDay: Long,
+        nowEpochMillis: Long,
+        thumbnailPath: String?,
     ): ImportResult {
         if (db.importDao().byHash(contentHash) != null) return ImportResult.DuplicateImage
 
@@ -114,8 +129,12 @@ class MistakeRepository(private val db: AppDatabase) {
                     ),
                 )
             } else {
+                // The collapsed occurrence must point at the LATEST evidence: the
+                // quiz-supersession check resolves this importId's timestamp to decide
+                // whether a lapse happened after the study — keeping the morning
+                // import's id would let a quiz erase an applied evening lapse.
                 db.occurrenceDao().update(
-                    sameDay.copy(hitCount = sameDay.hitCount + 1, type = detection.type),
+                    sameDay.copy(hitCount = sameDay.hitCount + 1, type = detection.type, importId = importId),
                 )
             }
         }
@@ -131,7 +150,18 @@ class MistakeRepository(private val db: AppDatabase) {
 
     suspend fun suspend(ref: WordRef) = setState(ref, SpotState.SUSPENDED)
 
-    suspend fun reactivate(ref: WordRef) = setState(ref, SpotState.ACTIVE)
+    /** Reactivation matches the import path: graduated spots return due today. */
+    suspend fun reactivate(ref: WordRef) {
+        val spot = db.spotDao().byId(encodeWordRef(ref)) ?: return
+        val epochDay = java.time.LocalDate.now().toEpochDay()
+        db.spotDao().update(
+            if (spot.state == SpotState.GRADUATED) {
+                spot.copy(state = SpotState.ACTIVE, graduatedAtEpochDay = null, dueEpochDay = epochDay)
+            } else {
+                spot.copy(state = SpotState.ACTIVE)
+            },
+        )
+    }
 
     /** Permanent removal — the UI guards this behind confirmation/undo (plan U12). */
     suspend fun delete(ref: WordRef) {

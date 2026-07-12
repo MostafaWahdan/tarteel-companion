@@ -21,7 +21,12 @@ class GenerationWorker(context: Context, params: WorkerParameters) : CoroutineWo
 
     override suspend fun doWork(): Result {
         val app = applicationContext as TarteelApp
-        val done = app.mnemonicRepo.generatePending(app.quran.await())
+        val done = try {
+            app.mnemonicRepo.generatePending(app.quran().await())
+        } catch (e: Exception) {
+            android.util.Log.w("GenerationWorker", "generation pass failed", e)
+            false // retry later — a dataset/DB hiccup must not kill the chain
+        }
         return if (done) Result.success() else Result.retry()
     }
 

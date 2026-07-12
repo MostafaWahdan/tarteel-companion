@@ -19,17 +19,7 @@ import java.io.File
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
 class SpikeHarnessTest {
 
-    private fun samplesDir(): File? {
-        var dir: File? = File(System.getProperty("user.dir"))
-        while (dir != null) {
-            val candidate = File(dir, "samples")
-            val hasImages = candidate.isDirectory &&
-                candidate.listFiles()?.any { it.extension.lowercase() in setOf("jpg", "jpeg", "png") } == true
-            if (hasImages) return candidate
-            dir = dir.parentFile
-        }
-        return null
-    }
+    private fun samplesDir(): File? = com.tarteelcompanion.TestData.samplesDir
 
     private class Cluster(
         var minX: Int, var maxX: Int, var minY: Int, var maxY: Int,

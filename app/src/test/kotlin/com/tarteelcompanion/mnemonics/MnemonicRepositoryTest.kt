@@ -6,7 +6,6 @@ import androidx.test.core.app.ApplicationProvider
 import com.tarteelcompanion.data.AppDatabase
 import com.tarteelcompanion.quran.AyahRef
 import com.tarteelcompanion.quran.MutashabihatGroup
-import com.tarteelcompanion.quran.QuranAssetReader
 import com.tarteelcompanion.quran.QuranRepository
 import kotlinx.coroutines.test.runTest
 import org.junit.After
@@ -47,28 +46,7 @@ class MnemonicRepositoryTest {
     private val group = MutashabihatGroup(AyahRef(2, 2), listOf(AyahRef(32, 2)))
     private val target = AyahRef(2, 2)
 
-    companion object {
-        private var quran: QuranRepository? = null
-
-        @JvmStatic
-        @org.junit.BeforeClass
-        fun loadQuran() {
-            var dir: File? = File(System.getProperty("user.dir"))
-            while (dir != null) {
-                val candidate = File(dir, "app/src/main/assets/quran")
-                    .takeIf { File(it, "pages/page-001.json").exists() }
-                    ?: File(dir, "src/main/assets/quran").takeIf { File(it, "pages/page-001.json").exists() }
-                if (candidate != null) {
-                    quran = QuranRepository.load(object : QuranAssetReader {
-                        override fun open(path: String): InputStream = File(candidate, path).inputStream()
-                        override fun exists(path: String): Boolean = File(candidate, path).exists()
-                    })
-                    return
-                }
-                dir = dir.parentFile
-            }
-        }
-    }
+    private val quran: QuranRepository? get() = com.tarteelcompanion.TestData.quran
 
     @Before
     fun setUp() {

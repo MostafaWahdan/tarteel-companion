@@ -102,16 +102,23 @@ class MnemonicRepository(
 
         var allHandled = true
         for (entity in pending) {
-            // Re-check: a user edit may have landed since pending() was read.
-            val fresh = dao.find(entity.groupSurah, entity.groupAyah, entity.targetSurah, entity.targetAyah)
-            if (fresh == null || fresh.source == MnemonicSource.USER || fresh.status != MnemonicStatus.PENDING) continue
+            // Per-item isolation: one unexpected exception must not abort the batch
+            // (review finding REL-3) — treat it as retryable and continue.
+            try {
+                // Re-check: a user edit may have landed since pending() was read.
+                val fresh = dao.find(entity.groupSurah, entity.groupAyah, entity.targetSurah, entity.targetAyah)
+                if (fresh == null || fresh.source == MnemonicSource.USER || fresh.status != MnemonicStatus.PENDING) continue
 
-            when (val result = client.generate(apiKey, buildPrompt(quran, fresh))) {
-                is LlmResult.Success ->
-                    dao.updateContent(fresh.id, result.text, MnemonicStatus.READY, MnemonicSource.LLM, null)
-                is LlmResult.Failed ->
-                    dao.updateContent(fresh.id, null, MnemonicStatus.FAILED, MnemonicSource.LLM, result.reason)
-                is LlmResult.Retryable -> allHandled = false
+                when (val result = client.generate(apiKey, buildPrompt(quran, fresh))) {
+                    is LlmResult.Success ->
+                        dao.updateContent(fresh.id, result.text, MnemonicStatus.READY, MnemonicSource.LLM, null)
+                    is LlmResult.Failed ->
+                        dao.updateContent(fresh.id, null, MnemonicStatus.FAILED, MnemonicSource.LLM, result.reason)
+                    is LlmResult.Retryable -> allHandled = false
+                }
+            } catch (e: Exception) {
+                android.util.Log.w("MnemonicRepository", "generation failed for mnemonic ${entity.id}", e)
+                allHandled = false
             }
         }
         return allHandled

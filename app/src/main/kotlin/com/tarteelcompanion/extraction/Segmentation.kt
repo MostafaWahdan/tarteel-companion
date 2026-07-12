@@ -31,8 +31,6 @@ object Segmentation {
     const val BAND_TOP_FRACTION = 0.10
     const val BAND_BOTTOM_FRACTION = 0.88
 
-    const val DEFAULT_WORD_GAP_FRACTION = 0.13
-
     private const val LUM_DELTA = 45
     private const val LINE_MERGE_GAP = 8
     private const val MIN_LINE_HEIGHT_FRACTION = 0.02 // of width
@@ -138,15 +136,12 @@ object Segmentation {
     }
 
     /**
-     * Words within a line: column ink profile (soft depth threshold to shrug off JPEG
-     * speckle), runs merged across intra-word letter gaps, RTL output.
+     * Ink runs within a line: column ink profile (soft depth threshold to shrug off
+     * JPEG speckle), tiny anti-aliasing gaps closed, RTL output. Runs — not words —
+     * are the primitive: justified rendering lets words touch and split, and the
+     * PageMatcher width alignment owns the run↔word mapping.
      */
-    fun findWords(
-        grid: PixelGrid,
-        line: LineBand,
-        lineIndex: Int,
-        wordGapFraction: Double = DEFAULT_WORD_GAP_FRACTION,
-    ): List<WordCluster> {
+    fun findWords(grid: PixelGrid, line: LineBand, lineIndex: Int): List<WordCluster> {
         val band = Band(grid, line.top, line.bottom)
         val xStart = (grid.width * X_INSET_FRACTION).toInt()
         val xEnd = grid.width - xStart
@@ -191,21 +186,6 @@ object Segmentation {
     private const val MIN_RUN_PX = 8
 
     /** Full text band in recitation order: lines top-to-bottom, words right-to-left. */
-    fun segment(grid: PixelGrid, wordGapFraction: Double = DEFAULT_WORD_GAP_FRACTION): List<WordCluster> =
-        findLines(grid).mapIndexed { index, line -> findWords(grid, line, index, wordGapFraction) }.flatten()
-
-    /** Test-only visibility into the raw column ink profile of a line. */
-    fun columnProfileForDiagnostics(grid: PixelGrid, line: LineBand): IntArray {
-        val band = Band(grid, line.top, line.bottom)
-        val xStart = (grid.width * X_INSET_FRACTION).toInt()
-        val xEnd = grid.width - xStart
-        val colInk = IntArray(grid.width)
-        for (y in line.top until line.bottom) {
-            if (band.isArtifactRow(y, xStart, xEnd)) continue
-            for (x in xStart until xEnd) {
-                if (band.isInk(x, y)) colInk[x]++
-            }
-        }
-        return colInk
-    }
+    fun segment(grid: PixelGrid): List<WordCluster> =
+        findLines(grid).mapIndexed { index, line -> findWords(grid, line, index) }.flatten()
 }

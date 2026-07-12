@@ -45,6 +45,8 @@ sealed interface ImportUiState {
         val item: ImportItem,
         val index: Int,
         val total: Int,
+        /** Transient auto-detect failure notice; existing marks are preserved. */
+        val detectMessage: String? = null,
     ) : ImportUiState
 
     data class BatchDone(val saved: Int, val discarded: Int, val duplicates: Int) : ImportUiState
@@ -59,7 +61,6 @@ sealed interface ImportUiState {
  */
 class ImportViewModel(
     private val appContext: Context,
-    private val quranDeferred: Deferred<QuranRepository>,
     private val mistakes: MistakeRepository,
     private val policy: SchedulingPolicy,
     private val pipelineProvider: suspend () -> ExtractionPipeline,
@@ -67,6 +68,9 @@ class ImportViewModel(
 
     /** Batch context: the last confirmed page seeds the next screenshot's hint. */
     private var lastConfirmedPage: Int? = null
+
+    /** Guards save/discard/autoDetect against double taps and stale completions. */
+    private var actionInFlight = false
 
     private val _state = MutableStateFlow<ImportUiState>(ImportUiState.Idle)
     val state: StateFlow<ImportUiState> = _state
@@ -94,7 +98,7 @@ class ImportViewModel(
             object : ViewModelProvider.Factory {
                 @Suppress("UNCHECKED_CAST")
                 override fun <T : ViewModel> create(modelClass: Class<T>): T =
-                    ImportViewModel(app, app.quran, app.mistakes, app.policy, pipelineProvider) as T
+                    ImportViewModel(app, app.mistakes, app.policy, pipelineProvider) as T
             }
     }
 
@@ -130,24 +134,56 @@ class ImportViewModel(
         }
     }
 
-    /** Re-anchors the current screenshot against a user-entered page number (U4 flow). */
+    /**
+     * Re-anchors the current screenshot against a user-entered page number (U4 flow).
+     * A failed detection must NOT destroy an existing extraction or reset the page
+     * field — it only surfaces a message (review finding ADV-5). Stale completions
+     * are dropped when the screen has moved on to another item (ADV-7).
+     */
     fun autoDetect(page: Int) {
         val current = _state.value as? ImportUiState.Confirming ?: return
+        if (actionInFlight) return
+        actionInFlight = true
         viewModelScope.launch {
-            val pipeline = pipelineProvider()
-            val item = current.item
-            val result = withContext(Dispatchers.IO) {
-                val pixels = IntArray(item.bitmap.width * item.bitmap.height)
-                item.bitmap.getPixels(pixels, 0, item.bitmap.width, 0, 0, item.bitmap.width, item.bitmap.height)
-                pipeline.anchorAt(pixels, item.bitmap.width, item.bitmap.height, page)
+            try {
+                val pipeline = pipelineProvider()
+                val item = current.item
+                val result = withContext(Dispatchers.IO) {
+                    val pixels = IntArray(item.bitmap.width * item.bitmap.height)
+                    item.bitmap.getPixels(pixels, 0, item.bitmap.width, 0, 0, item.bitmap.width, item.bitmap.height)
+                    pipeline.anchorAt(pixels, item.bitmap.width, item.bitmap.height, page)
+                }
+                val latest = _state.value
+                if (latest !is ImportUiState.Confirming || latest.item.hash != item.hash) return@launch
+                _state.value = when (result) {
+                    is ExtractionResult.Extracted ->
+                        latest.copy(item = item.copy(extraction = result), detectMessage = null)
+                    is ExtractionResult.NeedsManual ->
+                        latest.copy(detectMessage = "Auto-detect: ${result.reason}")
+                }
+            } finally {
+                actionInFlight = false
             }
-            _state.value = current.copy(item = item.copy(extraction = result))
         }
     }
 
     /** Save the (possibly corrected) detections for the current screenshot (R5). */
     fun save(item: ImportItem, pageNumber: Int?, detections: List<Detection>) {
+        if (actionInFlight) return
+        val current = _state.value
+        if (current !is ImportUiState.Confirming || current.item.hash != item.hash) return
+        actionInFlight = true
         viewModelScope.launch {
+            try {
+                saveInternal(item, pageNumber, detections)
+            } finally {
+                actionInFlight = false
+            }
+        }
+    }
+
+    private suspend fun saveInternal(item: ImportItem, pageNumber: Int?, detections: List<Detection>) {
+        run {
             val today = LocalDate.now().toEpochDay()
             val result = mistakes.recordImport(
                 contentHash = item.hash,
@@ -174,6 +210,7 @@ class ImportViewModel(
 
     /** "Discard — not a Tarteel page" exit (I3). */
     fun discard() {
+        if (_state.value !is ImportUiState.Confirming) return // double-tap guard
         discarded++
         processNext()
     }
