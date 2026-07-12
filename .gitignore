@@ -1,0 +1,26 @@
+# Gradle
+.gradle/
+build/
+app/build/
+
+# Android / IDE
+local.properties
+.idea/
+*.iml
+.kotlin/
+captures/
+.externalNativeBuild/
+.cxx/
+
+# Real Tarteel screenshots for the extraction spike — personal recitation data,
+# stays local unless deliberately committed (plan U3 / privacy note in README).
+samples/
+
+# Bundled QUL datasets stay out of git until redistribution terms are confirmed
+# (plan U2 license gate). Downloaded locally via scripts/fetch-datasets.
+app/src/main/assets/quran/
+
+# Keys and secrets — never commit (BYO-key policy, plan R23)
+*.keystore
+*.jks
+secrets.properties
