@@ -68,6 +68,9 @@ interface ImportDao {
     @Query("SELECT * FROM imports WHERE id = :id")
     suspend fun byId(id: Long): ImportScreenshotEntity?
 
+    @Query("SELECT * FROM imports ORDER BY importedAtEpochMillis DESC LIMIT 1")
+    suspend fun latest(): ImportScreenshotEntity?
+
     @Insert
     suspend fun insert(screenshot: ImportScreenshotEntity): Long
 }

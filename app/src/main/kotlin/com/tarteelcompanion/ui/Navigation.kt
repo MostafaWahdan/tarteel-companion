@@ -30,6 +30,10 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import com.tarteelcompanion.TarteelApp
 import com.tarteelcompanion.quran.QuranRepository
+import com.tarteelcompanion.archive.ArchiveScreen
+import com.tarteelcompanion.home.HomeScreen
+import com.tarteelcompanion.importflow.ImportScreen
+import com.tarteelcompanion.mnemonics.SettingsScreen
 import com.tarteelcompanion.quiz.QuizScreen
 import com.tarteelcompanion.study.StudyScreen
 
@@ -86,12 +90,17 @@ fun TarteelCompanionApp() {
                 startDestination = Destination.Home.route,
                 modifier = Modifier.padding(innerPadding),
             ) {
-                composable(Destination.Home.route) { PlaceholderScreen("Home") }
-                composable(Destination.Import.route) { PlaceholderScreen("Import") }
+                composable(Destination.Home.route) {
+                    HomeScreen(
+                        onNavigate = { route -> navController.navigate(route) },
+                        onOpenSettings = { navController.navigate(SETTINGS_ROUTE) },
+                    )
+                }
+                composable(Destination.Import.route) { ImportScreen(quran) }
                 composable(Destination.Study.route) { StudyScreen(quran) }
                 composable(Destination.Quiz.route) { QuizScreen(quran) }
-                composable(Destination.Archive.route) { PlaceholderScreen("Archive") }
-                composable(SETTINGS_ROUTE) { PlaceholderScreen("Settings") }
+                composable(Destination.Archive.route) { ArchiveScreen() }
+                composable(SETTINGS_ROUTE) { SettingsScreen() }
             }
         }
     }
