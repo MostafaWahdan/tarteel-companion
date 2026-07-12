@@ -2,7 +2,7 @@
   "formatVersion": 1,
   "database": {
     "version": 1,
-    "identityHash": "887767bcf6744c082ef0a11da52688bd",
+    "identityHash": "379d66e79b4077120ceafb6c3ca46ff4",
     "entities": [
       {
         "tableName": "spots",
@@ -303,12 +303,93 @@
           }
         ],
         "foreignKeys": []
+      },
+      {
+        "tableName": "mnemonics",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `groupSurah` INTEGER NOT NULL, `groupAyah` INTEGER NOT NULL, `targetSurah` INTEGER NOT NULL, `targetAyah` INTEGER NOT NULL, `text` TEXT, `status` TEXT NOT NULL, `source` TEXT NOT NULL, `failureReason` TEXT)",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "groupSurah",
+            "columnName": "groupSurah",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "groupAyah",
+            "columnName": "groupAyah",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "targetSurah",
+            "columnName": "targetSurah",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "targetAyah",
+            "columnName": "targetAyah",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "text",
+            "columnName": "text",
+            "affinity": "TEXT",
+            "notNull": false
+          },
+          {
+            "fieldPath": "status",
+            "columnName": "status",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "source",
+            "columnName": "source",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "failureReason",
+            "columnName": "failureReason",
+            "affinity": "TEXT",
+            "notNull": false
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_mnemonics_groupSurah_groupAyah_targetSurah_targetAyah",
+            "unique": true,
+            "columnNames": [
+              "groupSurah",
+              "groupAyah",
+              "targetSurah",
+              "targetAyah"
+            ],
+            "orders": [],
+            "createSql": "CREATE UNIQUE INDEX IF NOT EXISTS `index_mnemonics_groupSurah_groupAyah_targetSurah_targetAyah` ON `${TABLE_NAME}` (`groupSurah`, `groupAyah`, `targetSurah`, `targetAyah`)"
+          }
+        ],
+        "foreignKeys": []
       }
     ],
     "views": [],
     "setupQueries": [
       "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
-      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '887767bcf6744c082ef0a11da52688bd')"
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '379d66e79b4077120ceafb6c3ca46ff4')"
     ]
   }
 }
