@@ -7,6 +7,7 @@
     <!-- allowBackup=false: the on-device API key and mistake history must never be swept
          into Auto Backup or device-to-device transfer (plan R23 / security review). -->
     <application
+        android:name=".TarteelApp"
         android:allowBackup="false"
         android:label="Tarteel Companion"
         android:icon="@mipmap/ic_launcher"

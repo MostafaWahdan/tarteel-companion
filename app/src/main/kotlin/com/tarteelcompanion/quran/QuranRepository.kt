@@ -15,7 +15,11 @@ class QuranRepository private constructor(
     private val ayahOrdinal: Map<AyahRef, Int>,
     private val mutashabihatByAyah: Map<AyahRef, List<MutashabihatGroup>>,
     val mutashabihatGroups: List<MutashabihatGroup>,
+    private val surahNames: Map<Int, String>,
 ) {
+
+    /** Surah display name as rendered on the mushaf header line (e.g. "سُورَةُ ٱلْفَاتِحَةِ"). */
+    fun surahName(surah: Int): String? = surahNames[surah]
 
     val ayahCount: Int get() = ayahOrder.size
     val wordCount: Int by lazy { wordsByAyah.values.sumOf { it.size } }
@@ -66,8 +70,12 @@ class QuranRepository private constructor(
 
             val pageByAyah = mutableMapOf<AyahRef, Int>()
             val wordsByAyah = linkedMapOf<AyahRef, MutableList<QuranWord>>()
+            val surahNames = mutableMapOf<Int, String>()
             for (page in pages) {
                 for (line in page.lines) {
+                    if (line.type == LineType.SURAH_HEADER && line.surahNumber != null) {
+                        surahNames.putIfAbsent(line.surahNumber, line.headerText.orEmpty())
+                    }
                     for (word in line.words) {
                         val ayah = word.ref.ayahRef
                         pageByAyah.putIfAbsent(ayah, page.pageNumber)
@@ -101,6 +109,7 @@ class QuranRepository private constructor(
                 ayahOrdinal = ayahOrdinal,
                 mutashabihatByAyah = byAyah,
                 mutashabihatGroups = groups,
+                surahNames = surahNames,
             )
         }
     }

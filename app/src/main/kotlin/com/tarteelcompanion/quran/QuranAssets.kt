@@ -38,6 +38,7 @@ object QuranDataParser {
                 type = type,
                 words = line.words.orEmpty().map { QuranWord(WordRef.parse(it.location), it.word) },
                 surahNumber = line.surah?.toIntOrNull(),
+                headerText = if (type == LineType.SURAH_HEADER) line.text else null,
             )
         }
         return MushafPage(raw.page, lines)

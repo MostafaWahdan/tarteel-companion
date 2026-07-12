@@ -22,10 +22,15 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.navigation.NavDestination.Companion.hierarchy
 import androidx.navigation.NavGraph.Companion.findStartDestination
+import androidx.compose.runtime.produceState
+import androidx.compose.ui.platform.LocalContext
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
+import com.tarteelcompanion.TarteelApp
+import com.tarteelcompanion.quran.QuranRepository
+import com.tarteelcompanion.study.StudyScreen
 
 /**
  * Top-level destinations. Home / Import / Study / Quiz / Archive are bottom-nav tabs;
@@ -47,6 +52,10 @@ fun TarteelCompanionApp() {
         val navController = rememberNavController()
         val backStackEntry by navController.currentBackStackEntryAsState()
         val currentDestination = backStackEntry?.destination
+        val app = LocalContext.current.applicationContext as TarteelApp
+        val quran by produceState<QuranRepository?>(initialValue = null) {
+            value = app.quran.await()
+        }
 
         Scaffold(
             bottomBar = {
@@ -78,7 +87,7 @@ fun TarteelCompanionApp() {
             ) {
                 composable(Destination.Home.route) { PlaceholderScreen("Home") }
                 composable(Destination.Import.route) { PlaceholderScreen("Import") }
-                composable(Destination.Study.route) { PlaceholderScreen("Study") }
+                composable(Destination.Study.route) { StudyScreen(quran) }
                 composable(Destination.Quiz.route) { PlaceholderScreen("Quiz") }
                 composable(Destination.Archive.route) { PlaceholderScreen("Archive") }
                 composable(SETTINGS_ROUTE) { PlaceholderScreen("Settings") }

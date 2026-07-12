@@ -61,6 +61,13 @@ class SchedulingPolicy(
         return todayEpochDay > studyDay && gapOk
     }
 
+    /** Review-ahead pool (M4): active spots regardless of due date, minus quiz-pending ones. */
+    suspend fun quizExcludedActiveSpots(todayEpochDay: Long, nowEpochMillis: Long): List<SpotEntity> =
+        db.spotDao().byState(SpotState.ACTIVE)
+            .filterNot { isQuizPending(it.id, todayEpochDay, nowEpochMillis) }
+
+    suspend fun hasActiveSpots(): Boolean = db.spotDao().byState(SpotState.ACTIVE).isNotEmpty()
+
     /** Self-graded study review (U8). Review-ahead is allowed — grades apply normally. */
     suspend fun studyGrade(spotId: Long, grade: ReviewGrade, todayEpochDay: Long, nowEpochMillis: Long) {
         var spot = db.spotDao().byId(spotId) ?: return

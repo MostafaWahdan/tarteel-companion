@@ -37,6 +37,8 @@ data class MushafLine(
     val words: List<QuranWord>,
     /** Surah number for SURAH_HEADER lines; null otherwise. */
     val surahNumber: Int?,
+    /** Rendered surah name for SURAH_HEADER lines; null otherwise. */
+    val headerText: String? = null,
 )
 
 /** One page of the 604-page Madani mushaf. */
